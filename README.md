@@ -15,7 +15,6 @@ Im still working on this project. If you encounter any bugs or have ideas for ne
 
 ## Future plans
 Things im considering doing in the future versions:
-* Run this on a webserver so you guys always use the latest version
 * Rounded corners on rectangles
 * Circular bolt hole pattern
 * Finish pass
