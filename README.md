@@ -5,15 +5,21 @@ This is a webapp that will help you generate gcode for simple operations in a fa
 
 
 # How to use this app
-This app is designed as a webpage. This was done to make it easy to run without any advanced technical knowledge and still be compatible across operating systems. To use this app simply download the .zip and extract it. Afterwards you can open the index.html with your browser. An internet connection should not be needed for this app. 
+This app is designed as a webpage. This was done to make it easy to run without any advanced technical knowledge and still be compatible across operating systems. There are 2 ways to use this app:
+
+## Online
+The latest version of the web app can be viewed online [here (GitHub Pages).](https://fabianoh130.github.io/GcodeToolbox/).
+
+## Offline (local)
+To use this app offline simply download the .zip and extract it. Afterwards you can open the index.html with your browser. An internet connection should not be needed for this app. 
 Once in the app use the parameters to choose and configure your operation and click the generate button. Afterwards you get the possibility to download the file or simply copy the gcode and open it with your machine. Enjoy!
 
-The latest version of the web app can also be viewed online [here.](https://fabianoh130.github.io/GcodeToolbox/)
+
 
 # Bugs or ideas?
 Im still working on this project. If you encounter any bugs or have ideas for new functionality, please feel free to leave an issue and ill try to get back to you as soon as i can.
 
-## Future plans
+# Future plans
 Things im considering doing in the future versions:
 * Rounded corners on rectangles
 * Circular bolt hole pattern
