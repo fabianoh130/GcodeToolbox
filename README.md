@@ -21,7 +21,6 @@ Im still working on this project. If you encounter any bugs or have ideas for ne
 
 # Future plans
 Things im considering doing in the future versions:
-* Rounded corners on rectangles
 * Circular bolt hole pattern
 * Finish pass
 * G2/G3 arcs
