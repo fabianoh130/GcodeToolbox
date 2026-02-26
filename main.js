@@ -182,7 +182,7 @@ function setLanguage(lang) {
 const UNIT_LABEL_KEYS = [
   "form.patternedHolesDiameter", "form.patternedHolesSpacingX", "form.patternedHolesSpacingY",
   "form.diameter", "form.counterboreHeadDiameter", "form.counterboreDepth", "form.counterboreBoltDiameter",
-  "form.side", "form.width", "form.height", "form.hexagonHeight", "form.majorAxis", "form.minorAxis", "form.letterSize",
+  "form.side", "form.width", "form.height", "form.roundedCornerRadius", "form.hexagonHeight", "form.majorAxis", "form.minorAxis", "form.letterSize",
   "form.tabInterval", "form.tabWidth", "form.tabHeight",
   "form.toolDiameter", "form.totalDepth", "form.stepdown", "form.feedrate", "form.safeHeight", "form.leadInAbove", "form.zOffset",
 ];
@@ -905,9 +905,13 @@ function readInputsFromForm() {
     shapeParams.diameter = toMm(toNumber(g("circle-diameter").value), displayUnit);
   } else if (shape === ShapeType.SQUARE) {
     shapeParams.size = toMm(toNumber(g("square-size").value), displayUnit);
+    const cornerEl = g("rounded-corner-radius");
+    shapeParams.cornerRadius = cornerEl ? Math.max(0, toMm(toNumber(cornerEl.value), displayUnit)) : 0;
   } else if (shape === ShapeType.RECTANGLE || shape === ShapeType.FACING) {
     shapeParams.width = toMm(toNumber(g("rect-width").value), displayUnit);
     shapeParams.height = toMm(toNumber(g("rect-height").value), displayUnit);
+    const cornerEl = g("rounded-corner-radius");
+    shapeParams.cornerRadius = cornerEl ? Math.max(0, toMm(toNumber(cornerEl.value), displayUnit)) : 0;
   } else if (shape === ShapeType.ELLIPSE) {
     shapeParams.major = toMm(toNumber(g("ellipse-major").value), displayUnit);
     shapeParams.minor = toMm(toNumber(g("ellipse-minor").value), displayUnit);
@@ -1059,6 +1063,117 @@ function readInputsFromForm() {
       height: tabHeight,
     },
   };
+}
+
+/**
+ * Alleen-lezen snapshot van form voor vergelijking. Wijzigt NOOIT formulierwaarden.
+ */
+function getParamsSnapshotReadOnly() {
+  const g = (id) => document.getElementById(id);
+  const el = (id) => /** @type {HTMLInputElement|HTMLSelectElement|null} */ (g(id));
+  const displayUnit = getDisplayUnit();
+  const isSimple = getDisplayMode() === "simple";
+
+  const opCat = el("operation-type")?.value ?? OperationTypeCategory.SHAPES;
+  const shape = opCat === OperationTypeCategory.SHAPES ? el("shape")?.value : opCat;
+  const opRaw = el("operation")?.value;
+  const operation = (shape === ShapeType.FACING ? OperationType.FACING : shape === ShapeType.PATTERNED_HOLES ? OperationType.POCKET : opRaw);
+
+  const sp = { type: shape };
+  const v = (id) => toNumber(el(id)?.value);
+  const vm = (id) => toMm(v(id), displayUnit);
+  if (shape === ShapeType.CIRCLE) sp.diameter = vm("circle-diameter");
+  else if (shape === ShapeType.SQUARE) { sp.size = vm("square-size"); sp.cornerRadius = Math.max(0, vm("rounded-corner-radius") || 0); }
+  else if (shape === ShapeType.RECTANGLE || shape === ShapeType.FACING) { sp.width = vm("rect-width"); sp.height = vm("rect-height"); sp.cornerRadius = Math.max(0, vm("rounded-corner-radius") || 0); }
+  else if (shape === ShapeType.ELLIPSE) { sp.major = vm("ellipse-major"); sp.minor = vm("ellipse-minor"); }
+  else if (shape === ShapeType.HEXAGON) sp.height = vm("hexagon-height");
+  else if (shape === ShapeType.LETTERS) { sp.text = el("letter-text")?.value || ""; sp.fontSize = vm("letter-size") || 10; sp.letterOrientation = v("letter-orientation") || 0; }
+  else if (shape === ShapeType.COUNTERBORE_BOLT) { sp.headDiameter = vm("counterbore-head-diameter"); sp.counterboreDepth = vm("counterbore-depth"); sp.boltDiameter = vm("counterbore-bolt-diameter"); const td = vm("total-depth"); sp.boltHoleDepth = Math.max(0, (td || 0) - (sp.counterboreDepth || 0)); }
+  else if (shape === ShapeType.PATTERNED_HOLES) { sp.diameter = vm("patterned-holes-diameter"); sp.spacingX = vm("patterned-holes-spacing-x"); sp.spacingY = vm("patterned-holes-spacing-y"); sp.countX = Math.max(1, Math.floor(v("patterned-holes-count-x") || 1)); sp.countY = Math.max(1, Math.floor(v("patterned-holes-count-y") || 1)); }
+  else if (shape === ShapeType.DXF) { sp.type = "dxf"; sp.dxfOrientation = v("dxf-orientation") || 0; }
+
+  const letterMode = shape === ShapeType.LETTERS ? (el("letter-mode")?.value || "outline") : "outline";
+  const toolD = (shape === ShapeType.LETTERS && letterMode === "outline") ? 0.5 : vm("tool-diameter");
+  const totalD = vm("total-depth");
+  const multDep = el("multiple-depths")?.checked ?? false;
+  let stepdown = multDep ? vm("stepdown") : totalD;
+  if (shape === ShapeType.COUNTERBORE_BOLT && !multDep) stepdown = totalD;
+
+  let stepoverMm;
+  if (isSimple) stepoverMm = (Number.isFinite(toolD) && toolD > 0 ? 0.5 * toolD : 3);
+  else {
+    const unit = document.querySelector('input[name="stepover-unit"]:checked')?.value ?? "percent";
+    const sv = v("stepover");
+    stepoverMm = unit === "percent" && Number.isFinite(toolD) && Number.isFinite(sv) ? (sv / 100) * toolD : unit === "mm" ? vm("stepover") : NaN;
+    if (!Number.isFinite(stepoverMm) || stepoverMm <= 0) stepoverMm = Number.isFinite(toolD) && toolD > 0 ? 0.5 * toolD : 3;
+    stepoverMm = Math.min(stepoverMm, Number.isFinite(toolD) ? toolD : stepoverMm);
+  }
+
+  const cp = {
+    toolDiameter: toolD,
+    totalDepth: totalD,
+    stepdown,
+    stepover: stepoverMm,
+    feedrate: vm("feedrate"),
+    safeHeight: isSimple ? DEFAULT_SAFE_Z : (vm("safe-height") || DEFAULT_SAFE_Z),
+    leadInAboveMm: isSimple ? 2 : vm("lead-in-above"),
+    spindleSpeedEnabled: isSimple ? false : (el("spindle-speed-enabled")?.checked ?? false),
+    spindleSpeed: null,
+  };
+  const ss = v("spindle-speed");
+  if (cp.spindleSpeedEnabled && Number.isFinite(ss) && ss > 0) cp.spindleSpeed = ss;
+
+  const op = {
+    xyOrigin: el("xy-origin")?.value,
+    zOrigin: el("z-origin")?.value,
+    zOffset: isSimple ? 0 : (vm("z-offset") || 0),
+  };
+  const plungeRaw = el("plunge-outside")?.value ?? "off";
+  const plunge = isSimple ? false : ((operation === OperationType.POCKET || operation === OperationType.FACING || shape === ShapeType.DXF) ? false : plungeRaw === "on");
+  const facing = (el("facing-mode")?.value?.trim?.() ?? "") === "within" ? "within" : "full";
+  const contour = el("contour-type")?.value === "inside" ? "inside" : "outside";
+  const tabsEn = el("tabs-enabled")?.checked ?? false;
+  const tabs = { enabled: tabsEn, interval: vm("tab-interval"), width: vm("tab-width"), height: vm("tab-height") };
+  const entry = isSimple ? EntryMethod.PLUNGE : (el("entry-method")?.value || EntryMethod.PLUNGE);
+  const ramp = v("ramp-angle") || 3;
+
+  const snap = { shape, operation, shapeParams: sp, letterMode, contourType: contour, facingMode: facing, plungeOutside: plunge, cutParams: { ...cp, entryMethod: entry, rampAngleMax: ramp }, originParams: op, tabs };
+  if (shape === ShapeType.DXF) {
+    const f = el("dxf-file");
+    const file = f?.files?.[0];
+    snap.dxfFile = file ? { name: file.name, size: file.size, lastModified: file.lastModified } : null;
+  }
+  return snap;
+}
+
+const NUM_TOL = 1e-6;
+function paramsSnapshotsEqual(a, b) {
+  if (!a || !b) return a === b;
+  if (a.shape !== b.shape || a.operation !== b.operation || a.letterMode !== b.letterMode || a.contourType !== b.contourType || a.facingMode !== b.facingMode || a.plungeOutside !== b.plungeOutside) return false;
+  function eq(x, y) {
+    if (typeof x === "number" && typeof y === "number") return Math.abs(x - y) < NUM_TOL;
+    return x === y;
+  }
+  function objEq(oa, ob) {
+    if (oa === ob) return true;
+    if (oa == null || ob == null) return false;
+    const ka = Object.keys(oa);
+    if (ka.length !== Object.keys(ob).length) return false;
+    for (const k of ka) {
+      const va = oa[k], vb = ob[k];
+      if (typeof va === "number" && typeof vb === "number") { if (!eq(va, vb)) return false; }
+      else if (typeof va === "object" && va !== null && typeof vb === "object" && vb !== null) { if (!objEq(va, vb)) return false; }
+      else if (va !== vb) return false;
+    }
+    return true;
+  }
+  if (!objEq(a.shapeParams, b.shapeParams) || !objEq(a.cutParams, b.cutParams) || !objEq(a.originParams, b.originParams) || !objEq(a.tabs, b.tabs)) return false;
+  if (a.shape === ShapeType.DXF) {
+    const da = a.dxfFile, db = b.dxfFile;
+    if (!da !== !db) return false;
+    if (da && db && (da.name !== db.name || da.size !== db.size || da.lastModified !== db.lastModified)) return false;
+  }
+  return true;
 }
 
 function validateInputs(raw) {
@@ -1219,6 +1334,17 @@ function validateInputs(raw) {
     }
   }
 
+  if ((raw.shape === ShapeType.SQUARE || raw.shape === ShapeType.RECTANGLE || raw.shape === ShapeType.FACING) &&
+      Number.isFinite(sp.cornerRadius) &&
+      sp.cornerRadius > 0) {
+    const hw = raw.shape === ShapeType.SQUARE ? sp.size / 2 : sp.width / 2;
+    const hh = raw.shape === ShapeType.SQUARE ? sp.size / 2 : sp.height / 2;
+    const maxRadius = Math.min(hw, hh);
+    if (Number.isFinite(hw) && Number.isFinite(hh) && sp.cornerRadius >= maxRadius - 1e-6) {
+      errors.push(t("error.cornerRadiusTooLarge"));
+    }
+  }
+
   if (errors.length > 0) {
     return { ok: false, errors };
   }
@@ -1264,6 +1390,94 @@ function getHexagonVertices(height, scale = 1) {
 }
 
 /**
+ * Punten voor een afgeronde rechthoek (gecentreerd op oorsprong, CCW).
+ * @param {number} hw - halve breedte
+ * @param {number} hh - halve hoogte
+ * @param {number} cornerRadius - straal van de hoeken (0 = scherp)
+ * @param {number} [cornerSteps=10] - aantal punten per kwartcirkel
+ * @returns {{x:number,y:number,z:number}[]}
+ */
+function generateRoundedRectPoints(hw, hh, cornerRadius, cornerSteps = 10) {
+  const maxR = Math.min(hw, hh);
+  const r = Math.max(0, Math.min(cornerRadius || 0, maxR));
+  const steps = Math.max(1, Math.floor(cornerSteps));
+
+  if (r <= 0) {
+    return [
+      { x: -hw, y: -hh, z: 0 },
+      { x: hw, y: -hh, z: 0 },
+      { x: hw, y: hh, z: 0 },
+      { x: -hw, y: hh, z: 0 },
+      { x: -hw, y: -hh, z: 0 },
+    ];
+  }
+
+  const left = -hw;
+  const right = hw;
+  const bottom = -hh;
+  const top = hh;
+  const pts = [];
+
+  const edgeLen = Math.max(0, right - left - 2 * r);
+  if (edgeLen < 1e-9) {
+    const n = segmentsForCircleRadius(maxR);
+    const circlePts = [];
+    for (let i = 0; i <= n; i++) {
+      const t = (i / n) * 2 * Math.PI;
+      circlePts.push({ x: maxR * Math.cos(t), y: maxR * Math.sin(t), z: 0 });
+    }
+    return circlePts;
+  }
+
+  // Onderzijde: van (left + r, bottom) naar (right - r, bottom)
+  for (let x = left + r; x <= right - r + 1e-6; x += edgeLen / Math.max(steps, 1)) {
+    pts.push({ x, y: bottom, z: 0 });
+  }
+  // Onder-rechts hoek (kwartcirkel)
+  const cxBR = right - r;
+  const cyBR = bottom + r;
+  for (let i = 0; i <= steps; i++) {
+    const t = -Math.PI / 2 + (i / steps) * (Math.PI / 2);
+    pts.push({ x: cxBR + r * Math.cos(t), y: cyBR + r * Math.sin(t), z: 0 });
+  }
+  // Rechterzijde
+  for (let y = bottom + r; y <= top - r + 1e-6; y += (top - bottom - 2 * r) / Math.max(steps, 1)) {
+    pts.push({ x: right, y, z: 0 });
+  }
+  // Boven-rechts hoek
+  const cxTR = right - r;
+  const cyTR = top - r;
+  for (let i = 0; i <= steps; i++) {
+    const t = 0 + (i / steps) * (Math.PI / 2);
+    pts.push({ x: cxTR + r * Math.cos(t), y: cyTR + r * Math.sin(t), z: 0 });
+  }
+  // Bovenzijde
+  for (let x = right - r; x >= left + r - 1e-6; x -= (right - left - 2 * r) / Math.max(steps, 1)) {
+    pts.push({ x, y: top, z: 0 });
+  }
+  // Boven-links hoek
+  const cxTL = left + r;
+  const cyTL = top - r;
+  for (let i = 0; i <= steps; i++) {
+    const t = Math.PI / 2 + (i / steps) * (Math.PI / 2);
+    pts.push({ x: cxTL + r * Math.cos(t), y: cyTL + r * Math.sin(t), z: 0 });
+  }
+  // Linkerzijde
+  for (let y = top - r; y >= bottom + r - 1e-6; y -= (top - bottom - 2 * r) / Math.max(steps, 1)) {
+    pts.push({ x: left, y, z: 0 });
+  }
+  // Onder-links hoek
+  const cxBL = left + r;
+  const cyBL = bottom + r;
+  for (let i = 0; i <= steps; i++) {
+    const t = Math.PI + (i / steps) * (Math.PI / 2);
+    pts.push({ x: cxBL + r * Math.cos(t), y: cyBL + r * Math.sin(t), z: 0 });
+  }
+  pts.push(pts[0]);
+  return pts;
+}
+
+/**
  * Basisvormpaden (XY, Z=0) genereren.
  * Resultaat: array van punten (gesloten polyline) op Z=0.
  */
@@ -1287,19 +1501,13 @@ function generateBasePath(shape, shapeParams, operation) {
     }
   } else if (shape === ShapeType.SQUARE) {
     const half = shapeParams.size / 2;
-    points.push({ x: -half, y: -half, z: 0 });
-    points.push({ x: half, y: -half, z: 0 });
-    points.push({ x: half, y: half, z: 0 });
-    points.push({ x: -half, y: half, z: 0 });
-    points.push({ x: -half, y: -half, z: 0 });
+    const r = Number.isFinite(shapeParams.cornerRadius) ? shapeParams.cornerRadius : 0;
+    points.push(...generateRoundedRectPoints(half, half, r));
   } else if (shape === ShapeType.RECTANGLE) {
     const hw = shapeParams.width / 2;
     const hh = shapeParams.height / 2;
-    points.push({ x: -hw, y: -hh, z: 0 });
-    points.push({ x: hw, y: -hh, z: 0 });
-    points.push({ x: hw, y: hh, z: 0 });
-    points.push({ x: -hw, y: hh, z: 0 });
-    points.push({ x: -hw, y: -hh, z: 0 });
+    const r = Number.isFinite(shapeParams.cornerRadius) ? shapeParams.cornerRadius : 0;
+    points.push(...generateRoundedRectPoints(hw, hh, r));
   } else if (shape === ShapeType.HEXAGON) {
     const verts = getHexagonVertices(shapeParams.height, 1);
     verts.forEach((v) => points.push({ x: v.x, y: v.y, z: 0 }));
@@ -1340,164 +1548,16 @@ function generateContourPathWithOffset(shape, shapeParams, toolRadius, contourIn
   } else if (shape === ShapeType.SQUARE) {
     const half = shapeParams.size / 2 + offset;
     if (half <= 0) return [];
-
-    if (!contourInside) {
-      // Buitencontour vierkant: hoeken afronden om trillingen te verminderen.
-      const hw = half;
-      const hh = half;
-      const rCorner = Math.max(
-        Math.min(toolRadius * 0.8, hw * 0.5, hh * 0.5),
-        0
-      );
-      const cornerSteps = 10;
-      // Rechte stukken beginnen/stoppen rCorner voor de hoeken.
-      const left = -hw;
-      const right = hw;
-      const bottom = -hh;
-      const top = hh;
-
-      // Start op midden van onderzijde (links) en ga tegen de klok in.
-      // Onderzijde: van (left + rCorner, bottom) naar (right - rCorner, bottom)
-      for (let x = left + rCorner; x <= right - rCorner + 1e-6; x += (right - left - 2 * rCorner) / Math.max(cornerSteps, 1)) {
-        points.push({ x, y: bottom, z: 0 });
-      }
-      // Onder‑rechts hoek (kwartcirkel)
-      {
-        const cx = right - rCorner;
-        const cy = bottom + rCorner;
-        for (let i = 0; i <= cornerSteps; i++) {
-          const t = -Math.PI / 2 + (i / cornerSteps) * (Math.PI / 2);
-          points.push({ x: cx + rCorner * Math.cos(t), y: cy + rCorner * Math.sin(t), z: 0 });
-        }
-      }
-      // Rechterzijde
-      for (let y = bottom + rCorner; y <= top - rCorner + 1e-6; y += (top - bottom - 2 * rCorner) / Math.max(cornerSteps, 1)) {
-        points.push({ x: right, y, z: 0 });
-      }
-      // Boven‑rechts hoek
-      {
-        const cx = right - rCorner;
-        const cy = top - rCorner;
-        for (let i = 0; i <= cornerSteps; i++) {
-          const t = 0 + (i / cornerSteps) * (Math.PI / 2);
-          points.push({ x: cx + rCorner * Math.cos(t), y: cy + rCorner * Math.sin(t), z: 0 });
-        }
-      }
-      // Bovenzijde
-      for (let x = right - rCorner; x >= left + rCorner - 1e-6; x -= (right - left - 2 * rCorner) / Math.max(cornerSteps, 1)) {
-        points.push({ x, y: top, z: 0 });
-      }
-      // Boven‑links hoek
-      {
-        const cx = left + rCorner;
-        const cy = top - rCorner;
-        for (let i = 0; i <= cornerSteps; i++) {
-          const t = Math.PI / 2 + (i / cornerSteps) * (Math.PI / 2);
-          points.push({ x: cx + rCorner * Math.cos(t), y: cy + rCorner * Math.sin(t), z: 0 });
-        }
-      }
-      // Linkerzijde
-      for (let y = top - rCorner; y >= bottom + rCorner - 1e-6; y -= (top - bottom - 2 * rCorner) / Math.max(cornerSteps, 1)) {
-        points.push({ x: left, y, z: 0 });
-      }
-      // Onder‑links hoek
-      {
-        const cx = left + rCorner;
-        const cy = bottom + rCorner;
-        for (let i = 0; i <= cornerSteps; i++) {
-          const t = Math.PI + (i / cornerSteps) * (Math.PI / 2);
-          points.push({ x: cx + rCorner * Math.cos(t), y: cy + rCorner * Math.sin(t), z: 0 });
-        }
-      }
-      // Sluiten
-      points.push(points[0]);
-    } else {
-      // Binnencontour: klassieke scherpe hoeken.
-      points.push({ x: -half, y: -half, z: 0 });
-      points.push({ x: half, y: -half, z: 0 });
-      points.push({ x: half, y: half, z: 0 });
-      points.push({ x: -half, y: half, z: 0 });
-      points.push({ x: -half, y: -half, z: 0 });
-    }
+    const userR = Number.isFinite(shapeParams.cornerRadius) ? shapeParams.cornerRadius : 0;
+    const rEff = contourInside ? Math.max(0, userR + offset) : userR + offset;
+    points.push(...generateRoundedRectPoints(half, half, rEff));
   } else if (shape === ShapeType.RECTANGLE) {
     const hw = shapeParams.width / 2 + offset;
     const hh = shapeParams.height / 2 + offset;
     if (hw <= 0 || hh <= 0) return [];
-
-    if (!contourInside) {
-      // Buitencontour rechthoek: hoeken afronden.
-      const rCorner = Math.max(
-        Math.min(toolRadius * 0.8, hw * 0.5, hh * 0.5),
-        0
-      );
-      const cornerSteps = 10;
-      const left = -hw;
-      const right = hw;
-      const bottom = -hh;
-      const top = hh;
-
-      // Onderzijde
-      for (let x = left + rCorner; x <= right - rCorner + 1e-6; x += (right - left - 2 * rCorner) / Math.max(cornerSteps, 1)) {
-        points.push({ x, y: bottom, z: 0 });
-      }
-      // Onder‑rechts hoek
-      {
-        const cx = right - rCorner;
-        const cy = bottom + rCorner;
-        for (let i = 0; i <= cornerSteps; i++) {
-          const t = -Math.PI / 2 + (i / cornerSteps) * (Math.PI / 2);
-          points.push({ x: cx + rCorner * Math.cos(t), y: cy + rCorner * Math.sin(t), z: 0 });
-        }
-      }
-      // Rechterzijde
-      for (let y = bottom + rCorner; y <= top - rCorner + 1e-6; y += (top - bottom - 2 * rCorner) / Math.max(cornerSteps, 1)) {
-        points.push({ x: right, y, z: 0 });
-      }
-      // Boven‑rechts hoek
-      {
-        const cx = right - rCorner;
-        const cy = top - rCorner;
-        for (let i = 0; i <= cornerSteps; i++) {
-          const t = 0 + (i / cornerSteps) * (Math.PI / 2);
-          points.push({ x: cx + rCorner * Math.cos(t), y: cy + rCorner * Math.sin(t), z: 0 });
-        }
-      }
-      // Bovenzijde
-      for (let x = right - rCorner; x >= left + rCorner - 1e-6; x -= (right - left - 2 * rCorner) / Math.max(cornerSteps, 1)) {
-        points.push({ x, y: top, z: 0 });
-      }
-      // Boven‑links hoek
-      {
-        const cx = left + rCorner;
-        const cy = top - rCorner;
-        for (let i = 0; i <= cornerSteps; i++) {
-          const t = Math.PI / 2 + (i / cornerSteps) * (Math.PI / 2);
-          points.push({ x: cx + rCorner * Math.cos(t), y: cy + rCorner * Math.sin(t), z: 0 });
-        }
-      }
-      // Linkerzijde
-      for (let y = top - rCorner; y >= bottom + rCorner - 1e-6; y -= (top - bottom - 2 * rCorner) / Math.max(cornerSteps, 1)) {
-        points.push({ x: left, y, z: 0 });
-      }
-      // Onder‑links hoek
-      {
-        const cx = left + rCorner;
-        const cy = bottom + rCorner;
-        for (let i = 0; i <= cornerSteps; i++) {
-          const t = Math.PI + (i / cornerSteps) * (Math.PI / 2);
-          points.push({ x: cx + rCorner * Math.cos(t), y: cy + rCorner * Math.sin(t), z: 0 });
-        }
-      }
-      // Sluiten
-      points.push(points[0]);
-    } else {
-      // Binnencontour: klassieke scherpe hoeken.
-      points.push({ x: -hw, y: -hh, z: 0 });
-      points.push({ x: hw, y: -hh, z: 0 });
-      points.push({ x: hw, y: hh, z: 0 });
-      points.push({ x: -hw, y: hh, z: 0 });
-      points.push({ x: -hw, y: -hh, z: 0 });
-    }
+    const userR = Number.isFinite(shapeParams.cornerRadius) ? shapeParams.cornerRadius : 0;
+    const rEff = contourInside ? Math.max(0, userR + offset) : userR + offset;
+    points.push(...generateRoundedRectPoints(hw, hh, rEff));
   } else if (shape === ShapeType.HEXAGON) {
     const H = shapeParams.height;
     const apothem = H / 2;
@@ -1592,6 +1652,84 @@ function adjustHexagonContourStartToEdgeMid(path) {
 }
 
 /**
+ * Punten langs een cubic Bézier die tangent aansluit op beide ringen.
+ * P0=from, P3=to; raaklijn bij from = tangentFrom, raaklijn bij to = tangentTo.
+ * @param {{x:number,y:number,z?:number}} from - startpunt
+ * @param {{x:number,y:number,z?:number}} to - eindpunt
+ * @param {{x:number,y:number}} tangentFrom - richting bij from (genormaliseerd of met lengte)
+ * @param {{x:number,y:number}} tangentTo - richting bij to (genormaliseerd of met lengte)
+ * @param {number} [steps=12] - aantal tussenpunten
+ * @param {number} [tangentScale=0.4] - schaal voor raaklijnlengte (fractie van chord)
+ * @returns {{x:number,y:number,z:number}[]}
+ */
+function bezierTangentTransition(from, to, tangentFrom, tangentTo, steps = 12, tangentScale = 0.4) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const chord = Math.hypot(dx, dy);
+  if (chord < 1e-9) return [];
+  const baseScale = chord * Math.max(0.1, Math.min(1, tangentScale));
+  const tfLen = Math.hypot(tangentFrom.x, tangentFrom.y) || 1;
+  const ttLen = Math.hypot(tangentTo.x, tangentTo.y) || 1;
+  const tFrom = { x: tangentFrom.x / tfLen, y: tangentFrom.y / tfLen };
+  const tTo = { x: tangentTo.x / ttLen, y: tangentTo.y / ttLen };
+  const perpX = -dy / chord;
+  const perpY = dx / chord;
+  const dotFrom = tFrom.x * perpX + tFrom.y * perpY;
+  const dotTo = tTo.x * perpX + tTo.y * perpY;
+  const absFrom = Math.abs(dotFrom);
+  const absTo = Math.abs(dotTo);
+  let scale1 = baseScale;
+  let scale2 = baseScale;
+  if (absFrom > 1e-9 && absTo > 1e-9) {
+    scale2 = baseScale * absFrom / absTo;
+    const maxScale = chord * 1.2;
+    if (scale2 > maxScale) {
+      scale2 = maxScale;
+      scale1 = scale2 * absTo / absFrom;
+    } else if (scale1 > maxScale) {
+      scale1 = maxScale;
+      scale2 = scale1 * absFrom / absTo;
+    }
+  }
+  const p0 = { x: from.x, y: from.y };
+  const p3 = { x: to.x, y: to.y };
+  const p1 = { x: from.x + tFrom.x * scale1, y: from.y + tFrom.y * scale1 };
+  const p2 = { x: to.x - tTo.x * scale2, y: to.y - tTo.y * scale2 };
+  const pts = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const u = 1 - t;
+    const x = u * u * u * p0.x + 3 * u * u * t * p1.x + 3 * u * t * t * p2.x + t * t * t * p3.x;
+    const y = u * u * u * p0.y + 3 * u * u * t * p1.y + 3 * u * t * t * p2.y + t * t * t * p3.y;
+    pts.push({ x, y, z: (from.z ?? 0) });
+  }
+  return pts;
+}
+
+/**
+ * Combineert pocket-ringen tot één pad met rechte lijnen tussen ringen.
+ * Snijmove op diepte, geen retract.
+ */
+function ringsToPathWithCurvedTransitions(rings) {
+  if (!rings || rings.length === 0) return [];
+  if (rings.length === 1) return rings[0];
+  const combined = [];
+  for (let i = 0; i < rings.length; i++) {
+    const ring = rings[i];
+    if (!ring || ring.length < 2) continue;
+    if (i > 0) {
+      const prevEnd = combined[combined.length - 1];
+      const nextStart = ring[0];
+      combined.push({ x: nextStart.x, y: nextStart.y, z: nextStart.z ?? 0 });
+      combined.push(...ring.slice(1));
+    } else {
+      combined.push(...ring);
+    }
+  }
+  return combined;
+}
+
+/**
  * Pocket-paden genereren als reeks van polyline-ringen.
  * Voor een simpele eerste versie gebruiken we offset-ringen:
  * - Cirkel/ellipse: schalen
@@ -1645,17 +1783,15 @@ function generatePocketRings(shape, shapeParams, stepover, toolRadius) {
       toolRadius;
     if (hw <= 0 || hh <= 0) return [];
 
+    const userR = Number.isFinite(shapeParams.cornerRadius) ? shapeParams.cornerRadius : 0;
+    const rOuter = Math.max(0, userR - toolRadius);
     const maxOffset = Math.min(hw, hh);
     for (let off = 0; off <= maxOffset + 1e-6; off += stepover) {
       const w = hw - off;
       const h = hh - off;
       if (w <= 0 || h <= 0) break;
-      const pts = [];
-      pts.push({ x: -w, y: -h, z: 0 });
-      pts.push({ x: w, y: -h, z: 0 });
-      pts.push({ x: w, y: h, z: 0 });
-      pts.push({ x: -w, y: h, z: 0 });
-      pts.push({ x: -w, y: -h, z: 0 });
+      const rEff = Math.max(0, Math.min(rOuter - off, w, h));
+      const pts = generateRoundedRectPoints(w, h, rEff);
       rings.push(pts);
     }
   } else if (shape === ShapeType.HEXAGON) {
@@ -1820,6 +1956,7 @@ function generateSpiralPocketEllipse(shapeParams, stepover, toolRadius) {
 /**
  * Spiraal-pocket voor vierkant/rechthoek: spiraal blijft exact dezelfde (buiten → binnen).
  * G-code start in het midden (rode pijl) en volgt hetzelfde pad in omgekeerde richting (naar buiten).
+ * Ondersteunt afgeronde hoeken via shapeParams.cornerRadius.
  */
 function generateSpiralPocketRectangle(shape, shapeParams, stepover, toolRadius) {
   const hw =
@@ -1827,6 +1964,10 @@ function generateSpiralPocketRectangle(shape, shapeParams, stepover, toolRadius)
   const hh =
     (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.height) / 2 - toolRadius;
   if (hw <= 0 || hh <= 0) return [];
+
+  const userR = Number.isFinite(shapeParams.cornerRadius) ? shapeParams.cornerRadius : 0;
+  const rOuter = Math.max(0, userR - toolRadius);
+  const cornerSteps = 8;
 
   const path = [];
   path.push({ x: 0, y: 0, z: 0 });
@@ -1836,30 +1977,70 @@ function generateSpiralPocketRectangle(shape, shapeParams, stepover, toolRadius)
   let R = hw;
   let B = -hh;
   let T = hh;
+  let k = 0;
 
   while (L < R - 1e-9 && B < T - 1e-9) {
-    path.push({ x: R, y: B, z: 0 });
-    path.push({ x: R, y: T, z: 0 });
-    path.push({ x: L, y: T, z: 0 });
+    const w = R - L;
+    const h = T - B;
+    const rEff = Math.max(0, Math.min(rOuter - k * stepover, w / 2, h / 2));
+
+    if (rEff <= 0) {
+      path.push({ x: R, y: B, z: 0 });
+      path.push({ x: R, y: T, z: 0 });
+      path.push({ x: L, y: T, z: 0 });
+    } else {
+      const cxBR = R - rEff;
+      const cyBR = B + rEff;
+      const cxTR = R - rEff;
+      const cyTR = T - rEff;
+      const cxTL = L + rEff;
+      const cyTL = T - rEff;
+      const cxBL = L + rEff;
+      const cyBL = B + rEff;
+      path.push({ x: L + rEff, y: B, z: 0 });
+      path.push({ x: R - rEff, y: B, z: 0 });
+      for (let i = 0; i <= cornerSteps; i++) {
+        const t = -Math.PI / 2 + (i / cornerSteps) * (Math.PI / 2);
+        path.push({ x: cxBR + rEff * Math.cos(t), y: cyBR + rEff * Math.sin(t), z: 0 });
+      }
+      for (let i = 0; i <= cornerSteps; i++) {
+        const t = 0 + (i / cornerSteps) * (Math.PI / 2);
+        path.push({ x: cxTR + rEff * Math.cos(t), y: cyTR + rEff * Math.sin(t), z: 0 });
+      }
+      path.push({ x: L + rEff, y: T, z: 0 });
+      for (let i = 0; i <= cornerSteps; i++) {
+        const t = Math.PI / 2 + (i / cornerSteps) * (Math.PI / 2);
+        path.push({ x: cxTL + rEff * Math.cos(t), y: cyTL + rEff * Math.sin(t), z: 0 });
+      }
+      path.push({ x: L, y: T - rEff, z: 0 });
+      path.push({ x: L, y: B + rEff, z: 0 });
+      for (let i = 0; i <= cornerSteps; i++) {
+        const t = Math.PI + (i / cornerSteps) * (Math.PI / 2);
+        path.push({ x: cxBL + rEff * Math.cos(t), y: cyBL + rEff * Math.sin(t), z: 0 });
+      }
+      path.push({ x: L + rEff, y: B, z: 0 });
+    }
+
     const hasNextWinding = L + stepover < R - 1e-9 && B + stepover < T - 1e-9;
     if (hasNextWinding) {
-      path.push({ x: L, y: B + stepover, z: 0 });
-      path.push({ x: L + stepover, y: B + stepover, z: 0 });
+      const Ln = L + stepover;
+      const Bn = B + stepover;
+      const wn = R - stepover - Ln;
+      const hn = T - stepover - Bn;
+      const rEffNext = Math.max(0, Math.min(rOuter - (k + 1) * stepover, wn / 2, hn / 2));
+      path.push({ x: Ln + rEffNext, y: Bn, z: 0 });
     }
     L += stepover;
     R -= stepover;
     B += stepover;
     T -= stepover;
+    k += 1;
   }
 
-  // Zelfde spiraal, maar start aan begin van spiraal (innermost): pad omkeren, plunge daar (geen lijn van midden)
   const spiralPts = path.slice(2);
   spiralPts.reverse();
-
-  // Spiraal afsluiten: eindigt op (hw,-hh). Eerst onderkant dicht naar (-hw,-hh), dan lijntje omhoog naar (-hw,hh)
   spiralPts.push({ x: -hw, y: -hh, z: 0 });
   spiralPts.push({ x: -hw, y: hh, z: 0 });
-
   return spiralPts;
 }
 
@@ -1897,9 +2078,33 @@ function generateSpiralPocketHexagon(shapeParams, stepover, toolRadius) {
 }
 
 /**
+ * X-grenzen voor een horizontale lijn op y binnen een afgeronde rechthoek (hw, hh, r).
+ * @param {number} hw
+ * @param {number} hh
+ * @param {number} r
+ * @param {number} y
+ * @returns {{xMin:number,xMax:number}}
+ */
+function roundedRectXBoundsAtY(hw, hh, r, y) {
+  if (r <= 0) return { xMin: -hw, xMax: hw };
+  if (y >= hh - r && y <= hh) {
+    const dy = y - (hh - r);
+    const dx = Math.sqrt(Math.max(0, r * r - dy * dy));
+    return { xMin: -hw + r - dx, xMax: hw - r + dx };
+  }
+  if (y >= -hh && y <= -hh + r) {
+    const dy = y - (-hh + r);
+    const dx = Math.sqrt(Math.max(0, r * r - dy * dy));
+    return { xMin: -hw + r - dx, xMax: hw - r + dx };
+  }
+  return { xMin: -hw, xMax: hw };
+}
+
+/**
  * Facing-paden: parallelle strips (rechthoekig gebied vlakfrezen).
+ * Ondersteunt afgeronde hoeken via shapeParams.cornerRadius.
  * @param {string} shape - ShapeType.SQUARE of RECTANGLE
- * @param {{ size?: number, width?: number, height?: number }} shapeParams
+ * @param {{ size?: number, width?: number, height?: number, cornerRadius?: number }} shapeParams
  * @param {number} stepover
  * @param {number} toolRadius
  * @param {string} facingMode - "within" (tool binnen gebied) of "full" (helemaal bereiken)
@@ -1908,9 +2113,12 @@ function generateSpiralPocketHexagon(shapeParams, stepover, toolRadius) {
 function generateFacingPaths(shape, shapeParams, stepover, toolRadius, facingMode) {
   const hw = (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.width) / 2;
   const hh = (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.height) / 2;
+  const userR = Number.isFinite(shapeParams.cornerRadius) ? shapeParams.cornerRadius : 0;
+  const r = Math.min(userR, hw, hh);
   const isWithin = String(facingMode).toLowerCase().trim() === "within";
   const hwEff = isWithin ? hw - toolRadius : hw;
   const hhEff = isWithin ? hh - toolRadius : hh;
+  const rEff = Math.max(0, isWithin ? r - toolRadius : r);
   if (hwEff <= 0 || hhEff <= 0) return [];
 
   /** @type {{x:number,y:number,z:number}[][]} */
@@ -1918,14 +2126,15 @@ function generateFacingPaths(shape, shapeParams, stepover, toolRadius, facingMod
   let y = -hhEff;
   let reverse = false;
   while (y <= hhEff + 1e-9) {
+    const { xMin, xMax } = roundedRectXBoundsAtY(hwEff, hhEff, rEff, y);
     const strip = reverse
       ? [
-          { x: hwEff, y, z: 0 },
-          { x: -hwEff, y, z: 0 },
+          { x: xMax, y, z: 0 },
+          { x: xMin, y, z: 0 },
         ]
       : [
-          { x: -hwEff, y, z: 0 },
-          { x: hwEff, y, z: 0 },
+          { x: xMin, y, z: 0 },
+          { x: xMax, y, z: 0 },
         ];
     paths.push(strip);
     reverse = !reverse;
@@ -2294,13 +2503,8 @@ function getResultShapePathsRaw(params) {
     const h = shape === ShapeType.FACING ? shapeParams.height : (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.height);
     const hw = w / 2;
     const hh = h / 2;
-    paths.push([
-      { x: -hw, y: -hh, z: 0 },
-      { x: hw, y: -hh, z: 0 },
-      { x: hw, y: hh, z: 0 },
-      { x: -hw, y: hh, z: 0 },
-      { x: -hw, y: -hh, z: 0 },
-    ]);
+    const r = Number.isFinite(shapeParams.cornerRadius) ? shapeParams.cornerRadius : 0;
+    paths.push(generateRoundedRectPoints(hw, hh, r));
     return { paths, totalDepth, bottomZ };
   }
 
@@ -2905,7 +3109,9 @@ function generateToolpath(params) {
       } else if (shape === ShapeType.ELLIPSE) {
         pocketPaths = [generateSpiralPocketEllipse(shapeParams, cutParams.stepover, toolRadius)];
       } else if (shape === ShapeType.SQUARE || shape === ShapeType.RECTANGLE) {
-        pocketPaths = [generateSpiralPocketRectangle(shape, shapeParams, cutParams.stepover, toolRadius)];
+        const rings = generatePocketRings(shape, shapeParams, cutParams.stepover, toolRadius);
+        const fromInsideOut = rings.length > 0 ? rings.slice().reverse() : [];
+        pocketPaths = fromInsideOut.length > 0 ? [ringsToPathWithCurvedTransitions(fromInsideOut)] : [];
       } else if (shape === ShapeType.HEXAGON) {
         pocketPaths = [generateSpiralPocketHexagon(shapeParams, cutParams.stepover, toolRadius)];
       } else if (shape === ShapeType.PATTERNED_HOLES) {
@@ -5234,7 +5440,7 @@ function setupUI() {
 
   // Unit switcher (mm / inch): bewaar keuze, converteer velden bij wissel, update labels
   const LENGTH_INPUT_IDS = [
-    "circle-diameter", "square-size", "rect-width", "rect-height", "ellipse-major", "ellipse-minor", "letter-size",
+    "circle-diameter", "square-size", "rect-width", "rect-height", "rounded-corner-radius", "ellipse-major", "ellipse-minor", "letter-size",
     "counterbore-head-diameter", "counterbore-depth", "counterbore-bolt-diameter",
     "patterned-holes-diameter", "patterned-holes-spacing-x", "patterned-holes-spacing-y",
     "tab-interval", "tab-width", "tab-height",
@@ -5250,12 +5456,12 @@ function setupUI() {
   };
   /** Step in mm voor wrapper (data-step); gebruikt voor +/- knoppen en in inch omgerekend. */
   const STEP_MM_BY_INPUT = {
-    "circle-diameter": 1, "square-size": 1, "rect-width": 1, "rect-height": 1,
+    "circle-diameter": 1, "square-size": 1, "rect-width": 1, "rect-height": 1, "rounded-corner-radius": 0.5,
     "ellipse-major": 1, "ellipse-minor": 1, "letter-size": 1,
     "patterned-holes-diameter": 0.1, "patterned-holes-spacing-x": 1, "patterned-holes-spacing-y": 1,
     "counterbore-head-diameter": 1, "counterbore-depth": 0.5, "counterbore-bolt-diameter": 0.5,
     "tab-interval": 5, "tab-width": 1, "tab-height": 0.5,
-    "tool-diameter": 0.001, "total-depth": 0.5, "stepdown": 0.5, "feedrate": 50,
+    "tool-diameter": 1, "total-depth": 0.5, "stepdown": 0.5, "feedrate": 50,
     "safe-height": 1, "lead-in-above": 0.5, "z-offset": 0.5,
   };
   /** Inputs met vaste step in HTML (niet "any"); in inch step="any", in mm herstellen. */
@@ -5269,6 +5475,7 @@ function setupUI() {
     "square-size": 2,
     "rect-width": 3.5,
     "rect-height": 5,
+    "rounded-corner-radius": 0,
     "ellipse-major": 2.25,
     "ellipse-minor": 1.5,
     "letter-size": 0.375,
@@ -5599,6 +5806,19 @@ function setupUI() {
   const tabWidthInput = /** @type {HTMLInputElement} */ (document.getElementById("tab-width"));
   const tabHeightInput = /** @type {HTMLInputElement} */ (document.getElementById("tab-height"));
   const stepoverRow = document.getElementById("stepover-input-wrapper")?.closest(".field-row") ?? null;
+  const regenerateBanner = document.getElementById("regenerate-banner");
+  const generateBtn = document.getElementById("generate-btn");
+  let lastGenerationSnapshot = null;
+
+  function updateRegenerateIndicator() {
+    try {
+      if (!regenerateBanner || !generateBtn) return;
+      const current = getParamsSnapshotReadOnly();
+      const needs = lastGenerationSnapshot != null && (current == null || !paramsSnapshotsEqual(current, lastGenerationSnapshot));
+      regenerateBanner.classList.toggle("hidden", !needs);
+      generateBtn.classList.toggle("needs-regenerate", needs);
+    } catch (_) {}
+  }
 
   function updateTabParamsVisibility() {
     const enabled = !!tabsEnabledCheckbox?.checked;
@@ -6025,6 +6245,7 @@ function setupUI() {
       if (input.id === "patterned-holes-spacing-x" || input.id === "patterned-holes-spacing-y" || input.id === "patterned-holes-count-x" || input.id === "patterned-holes-count-y") {
         if (typeof updatePatternedHolesTotalHint === "function") updatePatternedHolesTotalHint();
       }
+      if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
     }
 
     downBtn.addEventListener("click", () => applyDelta(-getStepMinMax().step));
@@ -6062,6 +6283,7 @@ function setupUI() {
         stepoverWrapper.setAttribute("data-max", "100");
       }
       updateStepoverHint();
+      if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
     });
   });
 
@@ -6094,6 +6316,8 @@ function setupUI() {
   if (stepoverInput) stepoverInput.addEventListener("input", updateStepoverHint);
   document.addEventListener("languagechange", updateStepoverHint);
   document.addEventListener("unitchange", updateStepoverHint);
+  document.addEventListener("unitchange", updateRegenerateIndicator);
+  document.addEventListener("modechange", updateRegenerateIndicator);
   function updateStepoverMaxWhenMm() {
     const unit = /** @type {HTMLInputElement} */ (document.querySelector('input[name="stepover-unit"]:checked'))?.value;
     if (unit === "mm" && stepoverWrapper && stepoverInput && toolDiameterInput) {
@@ -6473,6 +6697,15 @@ function setupUI() {
     gcodeOutput.addEventListener("scroll", syncGcodeOverlayScroll);
   }
 
+  form.addEventListener("input", updateRegenerateIndicator);
+  form.addEventListener("change", updateRegenerateIndicator);
+  form.querySelectorAll("input, select, textarea").forEach((el) => {
+    el.addEventListener("input", updateRegenerateIndicator);
+    el.addEventListener("change", updateRegenerateIndicator);
+  });
+  const dxfFileEl = document.getElementById("dxf-file");
+  if (dxfFileEl) dxfFileEl.addEventListener("change", updateRegenerateIndicator);
+
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     if (errorMessage) errorMessage.textContent = "";
@@ -6558,6 +6791,8 @@ function setupUI() {
       if (previewCanvas) renderPreview(toolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
 
       saveLastSettings();
+      lastGenerationSnapshot = getParamsSnapshotReadOnly();
+      updateRegenerateIndicator();
 
       if (downloadBtn) {
         downloadBtn.disabled = false;
@@ -6593,6 +6828,7 @@ function setupUI() {
   // init defaults
   updateUIForOperationTypeAndShape();
   restoreLastSettings();
+  updateRegenerateIndicator();
 
   // lege preview
   lastToolpath = { moves: [] };
