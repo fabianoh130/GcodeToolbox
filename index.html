@@ -12,7 +12,7 @@
     <header class="app-header">
       <div class="app-header-inner">
         <div>
-          <h1><span data-i18n="header.title">Gcode toolbox</span> <a href="https://github.com/fabianoh130/GcodeToolbox" target="_blank" rel="noopener noreferrer" class="app-version" data-i18n-title="header.checkForUpdates" title="Check for updates">v3.1</a></h1>
+          <h1><span data-i18n="header.title">Gcode toolbox</span> <a href="https://github.com/fabianoh130/GcodeToolbox" target="_blank" rel="noopener noreferrer" class="app-version" data-i18n-title="header.checkForUpdates" title="Check for updates">v3.2</a></h1>
         </div>
         <div class="settings-menu-wrapper">
           <button
@@ -100,6 +100,7 @@
                 <option value="letters" data-i18n="form.shapeLetters">Letters (gravering)</option>
                 <option value="counterbore_bolt" data-i18n="form.shapeCounterboreBolt">Verzinkboring</option>
                 <option value="patterned_holes" data-i18n="form.shapePatternedHoles">Patterned holes</option>
+                <option value="circular_pattern_holes" data-i18n="form.shapeCircularPatternHoles">Circulaire gaten</option>
                 <option value="dxf" data-i18n="form.shapeDxf">DXF (contouren)</option>
               </select>
             </div>
@@ -315,6 +316,67 @@
                 <span id="patterned-holes-total-hint-y" class="field-hint patterned-holes-total-hint" aria-live="polite"></span>
               </div>
 
+              <div class="field-row shape-field shape-circular-pattern-holes hidden">
+                <label for="circular-pattern-holes-count" data-i18n="form.circularPatternHolesCount">Aantal gaten</label>
+                <div class="input-with-stepper" data-step="1" data-min="1">
+                  <input type="number" id="circular-pattern-holes-count" min="1" step="1" value="6" />
+                  <div class="stepper-buttons">
+                    <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
+                    <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
+                  </div>
+                </div>
+              </div>
+              <div class="field-row shape-field shape-circular-pattern-holes hidden">
+                <label for="circular-pattern-holes-diameter" data-i18n="form.circularPatternHolesDiameter">Diameter gaten (mm)</label>
+                <div class="input-with-stepper" data-step="0.1" data-min="0">
+                  <input type="number" id="circular-pattern-holes-diameter" min="0" step="any" value="10" />
+                  <div class="stepper-buttons">
+                    <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
+                    <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
+                  </div>
+                </div>
+              </div>
+              <div class="field-row shape-field shape-circular-pattern-holes hidden">
+                <label for="circular-pattern-holes-start-angle" data-i18n="form.circularPatternHolesStartAngle">Startpositie eerste gat (°)</label>
+                <div class="input-with-stepper" data-step="15" data-min="0" data-max="360">
+                  <input type="number" id="circular-pattern-holes-start-angle" min="0" max="360" step="any" value="0" />
+                  <div class="stepper-buttons">
+                    <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
+                    <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
+                  </div>
+                </div>
+              </div>
+              <div class="field-row shape-field shape-circular-pattern-holes hidden">
+                <label for="circular-pattern-holes-circle-diameter" data-i18n="form.circularPatternHolesCircleDiameter">Diameter cirkel (mm)</label>
+                <div class="input-with-stepper" data-step="1" data-min="0">
+                  <input type="number" id="circular-pattern-holes-circle-diameter" min="0" step="any" value="80" />
+                  <div class="stepper-buttons">
+                    <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
+                    <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
+                  </div>
+                </div>
+              </div>
+              <div class="field-row shape-field shape-circular-pattern-holes hidden field-row--inline">
+                <span class="field-label" data-i18n="form.circularPatternHolesCenterHole">Gat in midden</span>
+                <label class="toggle-btn-label">
+                  <input type="checkbox" id="circular-pattern-holes-center-hole" class="toggle-btn-input" />
+                  <span class="toggle-btn">
+                    <span class="toggle-btn-no" data-i18n="form.no">Nee</span>
+                    <span class="toggle-btn-yes" data-i18n="form.yes">Ja</span>
+                  </span>
+                </label>
+              </div>
+              <div class="field-row shape-field shape-circular-pattern-holes hidden" id="circular-pattern-holes-center-diameter-row">
+                <label for="circular-pattern-holes-center-diameter" data-i18n="form.circularPatternHolesCenterDiameter">Diameter centrumgat (mm)</label>
+                <div class="input-with-stepper" data-step="0.1" data-min="0">
+                  <input type="number" id="circular-pattern-holes-center-diameter" min="0" step="any" value="10" />
+                  <div class="stepper-buttons">
+                    <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
+                    <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
+                  </div>
+                </div>
+              </div>
+
               <div class="field-row shape-field shape-counterbore-bolt hidden">
                 <label for="counterbore-head-diameter" data-i18n="form.counterboreHeadDiameter">Diameter kop (mm)</label>
                 <div class="input-with-stepper" data-step="1" data-min="0">
@@ -383,7 +445,7 @@
             <div id="contour-type-row" class="field-row contour-only hidden">
               <label for="contour-type" data-i18n="form.contourType">Contour type</label>
               <select id="contour-type" name="contour-type">
-                <option value="outside" data-i18n="form.contourOutside">Buitencontour (vorm uitsnijden)</option>
+                <option value="outside" id="contour-type-outside" data-i18n="form.contourOutside">Buitencontour (vorm uitsnijden)</option>
                 <option value="inside" data-i18n="form.contourInside">Binnencontour (binnenkant van de vorm)</option>
               </select>
             </div>
@@ -623,7 +685,7 @@
               </div>
               <p id="contour-tabs-ramp-hint" class="contour-tabs-ramp-hint hidden" aria-live="polite" data-i18n="form.contourTabsRampHint">Bij contour met tabs en ramp kan de ramp door een tab heen lopen. Er is geen validatie op deze combinatie. Controleer het resultaat in de G-code preview.</p>
             </div>
-            <div class="field-row contour-only plunge-outside-no-dxf hidden">
+            <div class="field-row contour-only plunge-outside-no-dxf plunge-outside-no-circular-pattern-holes hidden">
               <span class="field-label" data-i18n="form.plungeOutside">Insteken naast part</span>
               <div class="plunge-outside-buttons" data-i18n-aria-label="form.plungeOutside">
                 <button

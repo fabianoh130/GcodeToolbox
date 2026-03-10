@@ -13,6 +13,7 @@ const ShapeType = {
   LETTERS: "letters",
   COUNTERBORE_BOLT: "counterbore_bolt",
   PATTERNED_HOLES: "patterned_holes",
+  CIRCULAR_PATTERN_HOLES: "circular_pattern_holes",
   DXF: "dxf",
 };
 
@@ -29,6 +30,7 @@ const OperationTypeCategory = {
   LETTERS: "letters",
   COUNTERBORE_BOLT: "counterbore_bolt",
   PATTERNED_HOLES: "patterned_holes",
+  CIRCULAR_PATTERN_HOLES: "circular_pattern_holes",
   DXF: "dxf",
 };
 
@@ -181,6 +183,7 @@ function setLanguage(lang) {
 /** Keys die een inch-variant hebben (form.xxxIn) voor label-weergave. */
 const UNIT_LABEL_KEYS = [
   "form.patternedHolesDiameter", "form.patternedHolesSpacingX", "form.patternedHolesSpacingY",
+  "form.circularPatternHolesDiameter", "form.circularPatternHolesCircleDiameter", "form.circularPatternHolesCenterDiameter",
   "form.diameter", "form.counterboreHeadDiameter", "form.counterboreDepth", "form.counterboreBoltDiameter",
   "form.side", "form.width", "form.height", "form.roundedCornerRadius", "form.hexagonHeight", "form.majorAxis", "form.minorAxis", "form.letterSize",
   "form.tabInterval", "form.tabWidth", "form.tabHeight",
@@ -259,6 +262,11 @@ function getShapeMinSize(shape, shapeParams) {
     case ShapeType.COUNTERBORE_BOLT:
       return Math.min(shapeParams.headDiameter || Infinity, shapeParams.boltDiameter || Infinity);
     case ShapeType.PATTERNED_HOLES:
+      return shapeParams.diameter;
+    case ShapeType.CIRCULAR_PATTERN_HOLES:
+      if (shapeParams.holeInCenter && Number.isFinite(shapeParams.centerHoleDiameter) && shapeParams.centerHoleDiameter > 0) {
+        return Math.min(shapeParams.diameter, shapeParams.centerHoleDiameter);
+      }
       return shapeParams.diameter;
     case ShapeType.DXF:
       return NaN;
@@ -935,6 +943,13 @@ function readInputsFromForm() {
     shapeParams.spacingY = toMm(toNumber(g("patterned-holes-spacing-y")?.value), displayUnit);
     shapeParams.countX = Math.max(1, Math.floor(toNumber(g("patterned-holes-count-x")?.value) || 1));
     shapeParams.countY = Math.max(1, Math.floor(toNumber(g("patterned-holes-count-y")?.value) || 1));
+  } else if (shape === ShapeType.CIRCULAR_PATTERN_HOLES) {
+    shapeParams.count = Math.max(1, Math.floor(toNumber(g("circular-pattern-holes-count")?.value) || 6));
+    shapeParams.diameter = toMm(toNumber(g("circular-pattern-holes-diameter")?.value), displayUnit);
+    shapeParams.circleDiameter = toMm(toNumber(g("circular-pattern-holes-circle-diameter")?.value), displayUnit);
+    shapeParams.startAngle = Math.max(0, Math.min(360, toNumber(g("circular-pattern-holes-start-angle")?.value) || 0));
+    shapeParams.holeInCenter = /** @type {HTMLInputElement} */ (g("circular-pattern-holes-center-hole"))?.checked ?? false;
+    shapeParams.centerHoleDiameter = shapeParams.holeInCenter ? toMm(toNumber(g("circular-pattern-holes-center-diameter")?.value), displayUnit) : 0;
   } else if (shape === ShapeType.DXF) {
     shapeParams.type = "dxf";
     shapeParams.dxfOrientation = toNumber(g("dxf-orientation")?.value) || 0;
@@ -1090,6 +1105,7 @@ function getParamsSnapshotReadOnly() {
   else if (shape === ShapeType.LETTERS) { sp.text = el("letter-text")?.value || ""; sp.fontSize = vm("letter-size") || 10; sp.letterOrientation = v("letter-orientation") || 0; }
   else if (shape === ShapeType.COUNTERBORE_BOLT) { sp.headDiameter = vm("counterbore-head-diameter"); sp.counterboreDepth = vm("counterbore-depth"); sp.boltDiameter = vm("counterbore-bolt-diameter"); const td = vm("total-depth"); sp.boltHoleDepth = Math.max(0, (td || 0) - (sp.counterboreDepth || 0)); }
   else if (shape === ShapeType.PATTERNED_HOLES) { sp.diameter = vm("patterned-holes-diameter"); sp.spacingX = vm("patterned-holes-spacing-x"); sp.spacingY = vm("patterned-holes-spacing-y"); sp.countX = Math.max(1, Math.floor(v("patterned-holes-count-x") || 1)); sp.countY = Math.max(1, Math.floor(v("patterned-holes-count-y") || 1)); }
+  else if (shape === ShapeType.CIRCULAR_PATTERN_HOLES) { sp.count = Math.max(1, Math.floor(v("circular-pattern-holes-count") || 6)); sp.diameter = vm("circular-pattern-holes-diameter"); sp.circleDiameter = vm("circular-pattern-holes-circle-diameter"); sp.startAngle = Math.max(0, Math.min(360, v("circular-pattern-holes-start-angle") || 0)); sp.holeInCenter = el("circular-pattern-holes-center-hole")?.checked ?? false; sp.centerHoleDiameter = sp.holeInCenter ? vm("circular-pattern-holes-center-diameter") : 0; }
   else if (shape === ShapeType.DXF) { sp.type = "dxf"; sp.dxfOrientation = v("dxf-orientation") || 0; }
 
   const letterMode = shape === ShapeType.LETTERS ? (el("letter-mode")?.value || "outline") : "outline";
@@ -1275,6 +1291,17 @@ function validateInputs(raw) {
       }
       if (!Number.isFinite(sp.countY) || sp.countY < 1) {
         errors.push(t("error.positive", { label: t("field.patternedHolesCountY") }));
+      }
+      break;
+    }
+    case ShapeType.CIRCULAR_PATTERN_HOLES: {
+      assertPositive(sp.diameter, "field.circularPatternHolesDiameter");
+      assertPositive(sp.circleDiameter, "field.circularPatternHolesCircleDiameter");
+      if (!Number.isFinite(sp.count) || sp.count < 1) {
+        errors.push(t("error.positive", { label: t("field.circularPatternHolesCount") }));
+      }
+      if (sp.holeInCenter) {
+        assertPositive(sp.centerHoleDiameter, "field.circularPatternHolesCenterDiameter");
       }
       break;
     }
@@ -2498,6 +2525,37 @@ function getResultShapePathsRaw(params) {
     return { paths, totalDepth, bottomZ };
   }
 
+  if (shape === ShapeType.CIRCULAR_PATTERN_HOLES && (operation === OperationType.POCKET || operation === OperationType.CONTOUR)) {
+    const count = Math.max(1, shapeParams.count || 6);
+    const circleRadius = (shapeParams.circleDiameter || 80) / 2;
+    const holeRadius = (shapeParams.diameter || 10) / 2;
+    const startAngleDeg = Math.max(0, Math.min(360, shapeParams.startAngle ?? 0));
+    const startAngleRad = Math.PI / 2 - (startAngleDeg * Math.PI / 180);
+    const segs = segmentsForCircleRadius(holeRadius);
+    for (let i = 0; i < count; i++) {
+      const angle = startAngleRad + (2 * Math.PI * i) / count;
+      const cx = circleRadius * Math.cos(angle);
+      const cy = circleRadius * Math.sin(angle);
+      const pts = [];
+      for (let k = 0; k <= segs; k++) {
+        const t = (k / segs) * 2 * Math.PI;
+        pts.push({ x: cx + holeRadius * Math.cos(t), y: cy + holeRadius * Math.sin(t), z: 0 });
+      }
+      paths.push(pts);
+    }
+    if (shapeParams.holeInCenter && Number.isFinite(shapeParams.centerHoleDiameter) && shapeParams.centerHoleDiameter > 0) {
+      const centerR = shapeParams.centerHoleDiameter / 2;
+      const centerSegs = segmentsForCircleRadius(centerR);
+      const pts = [];
+      for (let k = 0; k <= centerSegs; k++) {
+        const t = (k / centerSegs) * 2 * Math.PI;
+        pts.push({ x: centerR * Math.cos(t), y: centerR * Math.sin(t), z: 0 });
+      }
+      paths.push(pts);
+    }
+    return { paths, totalDepth, bottomZ };
+  }
+
   if (shape === ShapeType.FACING || (operation === OperationType.FACING && (shape === ShapeType.SQUARE || shape === ShapeType.RECTANGLE))) {
     const w = shape === ShapeType.FACING ? shapeParams.width : (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.width);
     const h = shape === ShapeType.FACING ? shapeParams.height : (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.height);
@@ -2965,14 +3023,41 @@ function generateToolpath(params) {
 
   // Voor contour: pad met halve freesdiameter offset (binnen- of buitencontour),
   // behalve in het speciale geval "binnencontour exact freesdiameter".
+  /** @type {{x:number,y:number,z:number}[][]|null} - meerdere contouren (alleen bij circular pattern holes) */
+  let contourPaths = null;
   let contourPath =
     operation === OperationType.CONTOUR
-      ? generateContourPathWithOffset(
-          shape,
-          shapeParams,
-          toolRadius,
-          contourType === "inside"
-        )
+      ? (shape === ShapeType.CIRCULAR_PATTERN_HOLES && contourType === "inside"
+          ? (() => {
+              const count = Math.max(1, shapeParams.count || 6);
+              const circleRadius = (shapeParams.circleDiameter || 80) / 2;
+              const startAngleDeg = Math.max(0, Math.min(360, shapeParams.startAngle ?? 0));
+              const startAngleRad = Math.PI / 2 - (startAngleDeg * Math.PI / 180);
+              const holeParams = { diameter: shapeParams.diameter };
+              const singleCircle = generateContourPathWithOffset(ShapeType.CIRCLE, holeParams, toolRadius, true);
+              if (!singleCircle || singleCircle.length < 2) return [];
+              contourPaths = [];
+              for (let i = 0; i < count; i++) {
+                const angle = startAngleRad + (2 * Math.PI * i) / count;
+                const cx = circleRadius * Math.cos(angle);
+                const cy = circleRadius * Math.sin(angle);
+                contourPaths.push(singleCircle.map((p) => ({ x: p.x + cx, y: p.y + cy, z: p.z })));
+              }
+              if (shapeParams.holeInCenter && Number.isFinite(shapeParams.centerHoleDiameter) && shapeParams.centerHoleDiameter > 0) {
+                const centerParams = { diameter: shapeParams.centerHoleDiameter };
+                const centerCircle = generateContourPathWithOffset(ShapeType.CIRCLE, centerParams, toolRadius, true);
+                if (centerCircle && centerCircle.length >= 2) {
+                  contourPaths.push(centerCircle.map((p) => ({ x: p.x, y: p.y, z: p.z })));
+                }
+              }
+              return contourPaths[0] || [];
+            })()
+          : generateContourPathWithOffset(
+              shape,
+              shapeParams,
+              toolRadius,
+              contourType === "inside"
+            ))
       : generateBasePath(shape, shapeParams, operation);
 
   // Speciaal geval: binnencontour exact freesdiameter
@@ -3130,11 +3215,31 @@ function generateToolpath(params) {
             pocketPaths.push(translatedPath);
           }
         }
+      } else if (shape === ShapeType.CIRCULAR_PATTERN_HOLES) {
+        const count = Math.max(1, shapeParams.count || 6);
+        const circleRadius = (shapeParams.circleDiameter || 80) / 2;
+        const startAngleDeg = Math.max(0, Math.min(360, shapeParams.startAngle ?? 0));
+        const startAngleRad = Math.PI / 2 - (startAngleDeg * Math.PI / 180);
+        const holeShapeParams = { diameter: shapeParams.diameter };
+        const singlePath = generateSpiralPocketCircle(holeShapeParams, cutParams.stepover, toolRadius);
+        pocketPaths = [];
+        for (let i = 0; i < count; i++) {
+          const angle = startAngleRad + (2 * Math.PI * i) / count;
+          const cx = circleRadius * Math.cos(angle);
+          const cy = circleRadius * Math.sin(angle);
+          const translatedPath = singlePath.map((p) => ({ x: p.x + cx, y: p.y + cy, z: p.z }));
+          pocketPaths.push(translatedPath);
+        }
+        if (shapeParams.holeInCenter && Number.isFinite(shapeParams.centerHoleDiameter) && shapeParams.centerHoleDiameter > 0) {
+          const centerHoleParams = { diameter: shapeParams.centerHoleDiameter };
+          const centerPath = generateSpiralPocketCircle(centerHoleParams, cutParams.stepover, toolRadius);
+          pocketPaths.push(centerPath);
+        }
       }
     }
   }
 
-  /** @type {{x:number,y:number}[]} - per pocket het midden (alleen bij patterned holes) */
+  /** @type {{x:number,y:number}[]} - per pocket het midden (alleen bij patterned holes / circular pattern holes) */
   let pocketCenters = [];
   if (shape === ShapeType.PATTERNED_HOLES && operation === OperationType.POCKET) {
     const countX = Math.max(1, shapeParams.countX || 1);
@@ -3146,6 +3251,18 @@ function generateToolpath(params) {
         pocketCenters.push({ x: i * spacingX, y: j * spacingY });
       }
     }
+  } else if (shape === ShapeType.CIRCULAR_PATTERN_HOLES && (operation === OperationType.POCKET || operation === OperationType.CONTOUR)) {
+    const count = Math.max(1, shapeParams.count || 6);
+    const circleRadius = (shapeParams.circleDiameter || 80) / 2;
+    const startAngleDeg = Math.max(0, Math.min(360, shapeParams.startAngle ?? 0));
+    const startAngleRad = Math.PI / 2 - (startAngleDeg * Math.PI / 180);
+    for (let i = 0; i < count; i++) {
+      const angle = startAngleRad + (2 * Math.PI * i) / count;
+      pocketCenters.push({ x: circleRadius * Math.cos(angle), y: circleRadius * Math.sin(angle) });
+    }
+    if (shapeParams.holeInCenter && Number.isFinite(shapeParams.centerHoleDiameter) && shapeParams.centerHoleDiameter > 0) {
+      pocketCenters.push({ x: 0, y: 0 });
+    }
   }
 
   const entryMethod = cutParams.entryMethod;
@@ -3153,23 +3270,56 @@ function generateToolpath(params) {
 
   depths.forEach((depthZ, depthIndex) => {
     if (operation === OperationType.CONTOUR) {
-      if (contourPath.length < 2) return; // te kleine vorm na offset
-      const isLastLayer = depthIndex === depths.length - 1;
-      addLayerForPath(
-        moves,
-        contourPath,
-        depthZ,
-        cutParams,
-        plungeOutside,
-        entryMethod,
-        true,
-        safeZ,
-        tabConfig,
-        contourType === "inside",
-        false,
-        0,
-        isLastLayer
-      );
+      if (contourPaths && contourPaths.length > 0) {
+        const isLastLayer = depthIndex === depths.length - 1;
+        const toolRadiusContour = cutParams.toolDiameter / 2;
+        const maxHelixRadiusContour = contourType === "inside" ? Math.max(0, (shapeParams.diameter / 2) - toolRadiusContour) : undefined;
+        contourPaths.forEach((path, idx) => {
+          if (path.length < 2) return;
+          const center = pocketCenters[idx] || { x: 0, y: 0 };
+          addLayerForPath(
+            moves,
+            path,
+            depthZ,
+            cutParams,
+            plungeOutside && idx === 0,
+            entryMethod,
+            idx === 0,
+            safeZ,
+            undefined,
+            true,
+            true,
+            toolRadiusContour,
+            isLastLayer && idx === contourPaths.length - 1,
+            maxHelixRadiusContour,
+            center.x,
+            center.y
+          );
+          if (idx < contourPaths.length - 1) {
+            const last = moves[moves.length - 1];
+            if (last && last.z < safeZ - 1e-6) {
+              moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
+            }
+          }
+        });
+      } else if (contourPath && contourPath.length >= 2) {
+        const isLastLayer = depthIndex === depths.length - 1;
+        addLayerForPath(
+          moves,
+          contourPath,
+          depthZ,
+          cutParams,
+          plungeOutside,
+          entryMethod,
+          true,
+          safeZ,
+          tabConfig,
+          contourType === "inside",
+          false,
+          0,
+          isLastLayer
+        );
+      }
     } else if (operation === OperationType.FACING) {
       const toolRadiusFacing = cutParams.toolDiameter / 2;
       const isFacingShape = shape === ShapeType.FACING;
@@ -3217,10 +3367,12 @@ function generateToolpath(params) {
         maxHelixRadiusPocket = Math.max(0, apothem);
       } else if (shape === ShapeType.PATTERNED_HOLES) {
         maxHelixRadiusPocket = Math.max(0, (shapeParams.diameter / 2) - toolRadiusPocket);
+      } else if (shape === ShapeType.CIRCULAR_PATTERN_HOLES) {
+        maxHelixRadiusPocket = Math.max(0, (shapeParams.diameter / 2) - toolRadiusPocket);
       }
       pocketPaths.forEach((path, idx) => {
         const outside = plungeOutside && idx === 0;
-        const center = shape === ShapeType.PATTERNED_HOLES && pocketCenters[idx] ? pocketCenters[idx] : { x: 0, y: 0 };
+        const center = (shape === ShapeType.PATTERNED_HOLES || shape === ShapeType.CIRCULAR_PATTERN_HOLES) && pocketCenters[idx] ? pocketCenters[idx] : { x: 0, y: 0 };
         addLayerForPath(
           moves,
           path,
@@ -3240,7 +3392,7 @@ function generateToolpath(params) {
           center.y
         );
         // Bij patterned holes: na elk gat eerst naar midden, dan retract — voorkomt sporen aan de rand
-        if (shape === ShapeType.PATTERNED_HOLES && pocketCenters[idx]) {
+        if ((shape === ShapeType.PATTERNED_HOLES || shape === ShapeType.CIRCULAR_PATTERN_HOLES) && pocketCenters[idx]) {
           const last = moves[moves.length - 1];
           if (last && last.z < safeZ - 1e-6) {
             const cx = pocketCenters[idx].x;
@@ -3263,7 +3415,7 @@ function generateToolpath(params) {
       });
       // Bij meerdere pockets (patterned holes): na elke dieptelaag retracten zodat de volgende laag
       // niet als "continuing from previous layer" een cut-lijn naar het eerste gat maakt
-      if (shape === ShapeType.PATTERNED_HOLES && pocketPaths.length > 1 && depthIndex < depths.length - 1) {
+      if ((shape === ShapeType.PATTERNED_HOLES || shape === ShapeType.CIRCULAR_PATTERN_HOLES) && pocketPaths.length > 1 && depthIndex < depths.length - 1) {
         const last = moves[moves.length - 1];
         if (last && last.z < safeZ - 1e-6) {
           moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
@@ -3277,10 +3429,10 @@ function generateToolpath(params) {
   if (moves.length > 0) {
     const last = moves[moves.length - 1];
     if (last.z < safeZ - 1e-6) {
-      if (operation === OperationType.POCKET || operation === OperationType.FACING) {
+      if (operation === OperationType.POCKET || operation === OperationType.FACING || (shape === ShapeType.CIRCULAR_PATTERN_HOLES && operation === OperationType.CONTOUR && pocketCenters.length > 0)) {
         // Eerst een recht lijntje richting het midden (net van de rand af), dan retract — geen boog, geen sporen
-        const cx = (shape === ShapeType.PATTERNED_HOLES && pocketCenters.length > 0) ? pocketCenters[pocketCenters.length - 1].x : 0;
-        const cy = (shape === ShapeType.PATTERNED_HOLES && pocketCenters.length > 0) ? pocketCenters[pocketCenters.length - 1].y : 0;
+        const cx = ((shape === ShapeType.PATTERNED_HOLES || shape === ShapeType.CIRCULAR_PATTERN_HOLES) && pocketCenters.length > 0) ? pocketCenters[pocketCenters.length - 1].x : 0;
+        const cy = ((shape === ShapeType.PATTERNED_HOLES || shape === ShapeType.CIRCULAR_PATTERN_HOLES) && pocketCenters.length > 0) ? pocketCenters[pocketCenters.length - 1].y : 0;
         const dx = cx - last.x;
         const dy = cy - last.y;
         const dist = Math.hypot(dx, dy);
@@ -5880,6 +6032,7 @@ function setupUI() {
       [ShapeType.LETTERS]: ".shape-letters",
       [ShapeType.COUNTERBORE_BOLT]: ".shape-counterbore-bolt",
       [ShapeType.PATTERNED_HOLES]: ".shape-patterned-holes",
+      [ShapeType.CIRCULAR_PATTERN_HOLES]: ".shape-circular-pattern-holes",
       [ShapeType.DXF]: ".shape-dxf",
     };
     const selector = map[selected];
@@ -5896,6 +6049,17 @@ function setupUI() {
       if (operationRow) operationRow.classList.add("hidden");
       contourOnlyElems.forEach((el) => el.classList.add("hidden"));
       facingOnlyElems.forEach((el) => el.classList.add("hidden"));
+    } else if (selected === ShapeType.CIRCULAR_PATTERN_HOLES) {
+      if (operationRow) operationRow.classList.remove("hidden");
+      facingOnlyElems.forEach((el) => el.classList.add("hidden"));
+      const pocketOpt = operationSelect?.querySelector('option[value="pocket"]');
+      if (pocketOpt) pocketOpt.disabled = false;
+      contourOnlyElems.forEach((el) => el.classList.remove("hidden"));
+      if (operationSelect?.value === OperationType.CONTOUR) {
+        const contourTypeSelect = /** @type {HTMLSelectElement} */ (document.getElementById("contour-type"));
+        if (contourTypeSelect) contourTypeSelect.value = "inside";
+      }
+      updateContourTypeVisibility();
     } else if (selected === ShapeType.DXF) {
       if (operationRow) operationRow.classList.remove("hidden");
       contourOnlyElems.forEach((el) => {
@@ -5933,7 +6097,7 @@ function setupUI() {
     if (xyOriginSelect) {
       if (selected === ShapeType.SQUARE || selected === ShapeType.RECTANGLE || selected === ShapeType.FACING || selected === ShapeType.LETTERS || selected === ShapeType.PATTERNED_HOLES || selected === ShapeType.DXF) {
         xyOriginSelect.value = XYOrigin.BOTTOM_LEFT;
-      } else if (selected === ShapeType.CIRCLE || selected === ShapeType.ELLIPSE || selected === ShapeType.HEXAGON || selected === ShapeType.COUNTERBORE_BOLT) {
+      } else if (selected === ShapeType.CIRCLE || selected === ShapeType.ELLIPSE || selected === ShapeType.HEXAGON || selected === ShapeType.COUNTERBORE_BOLT || selected === ShapeType.CIRCULAR_PATTERN_HOLES) {
         xyOriginSelect.value = XYOrigin.CENTER;
       }
     }
@@ -5943,11 +6107,25 @@ function setupUI() {
       if (totalDepthEl) totalDepthEl.value = "0.5";
     }
 
+    updateCircularPatternHolesCenterRowVisibility();
     updateToolDiameterVisibility();
+  }
+
+  function updateCircularPatternHolesCenterRowVisibility() {
+    const centerRow = document.getElementById("circular-pattern-holes-center-diameter-row");
+    const centerCb = /** @type {HTMLInputElement | null} */ (document.getElementById("circular-pattern-holes-center-hole"));
+    if (centerRow && centerCb) {
+      centerRow.classList.toggle("hidden", !centerCb.checked);
+    }
   }
 
   operationTypeSelect?.addEventListener("change", updateUIForOperationTypeAndShape);
   shapeSelect?.addEventListener("change", updateUIForOperationTypeAndShape);
+
+  const circularPatternHolesCenterCb = document.getElementById("circular-pattern-holes-center-hole");
+  if (circularPatternHolesCenterCb) {
+    circularPatternHolesCenterCb.addEventListener("change", updateCircularPatternHolesCenterRowVisibility);
+  }
 
   // DXF bestand: toon gekozen bestandsnaam
   const dxfFileInput = document.getElementById("dxf-file");
@@ -6104,16 +6282,38 @@ function setupUI() {
 
   function updateContourTypeVisibility() {
     const op = operationSelect.value;
-    const shape = shapeSelect.value;
+    const shape = getEffectiveShape();
     const showContour = op === OperationType.CONTOUR;
     const showFacing = shape === ShapeType.FACING;
 
+    const contourTypeSelect = /** @type {HTMLSelectElement} */ (document.getElementById("contour-type"));
+    const outsideOpt = document.getElementById("contour-type-outside");
+    const isCircularPatternHoles = shape === ShapeType.CIRCULAR_PATTERN_HOLES;
+    if (outsideOpt) {
+      if (showContour && isCircularPatternHoles) {
+        outsideOpt.setAttribute("hidden", "");
+        outsideOpt.disabled = true;
+        if (contourTypeSelect && contourTypeSelect.value === "outside") {
+          contourTypeSelect.value = "inside";
+        }
+      } else {
+        outsideOpt.removeAttribute("hidden");
+        outsideOpt.disabled = false;
+      }
+    }
+
     const contourOnlyElems = document.querySelectorAll(".contour-only");
     const isDxf = shape === ShapeType.DXF;
+    const isCircularPatternHolesContour = showContour && shape === ShapeType.CIRCULAR_PATTERN_HOLES;
+    if (isCircularPatternHolesContour && plungeOutsideInput) {
+      plungeOutsideInput.value = "off";
+      plungeOutsideButtons.forEach((b) => b.classList.toggle("entry-method-btn--active", b.dataset.plungeOutside === "off"));
+    }
     contourOnlyElems.forEach((el) => {
       if (showContour) {
         el.classList.remove("hidden");
         if (el.classList.contains("plunge-outside-no-dxf") && isDxf) el.classList.add("hidden");
+        if (el.classList.contains("plunge-outside-no-circular-pattern-holes") && isCircularPatternHolesContour) el.classList.add("hidden");
       } else {
         el.classList.add("hidden");
       }
@@ -6402,12 +6602,17 @@ function setupUI() {
   // Kolom in preview op het punt van de gcode-regel waar de cursor staat (diameter = freesdikte, hoogte 50 mm)
   let cursorColumnForPreview = null;
 
-  // Playback: gcode van boven naar beneden doorlopen met freespositie in preview
+  // Playback: time-based animatie op vaste 10fps, positie geïnterpoleerd langs het pad
   const GCODE_HEADER_LINES = 5; // aantal regels vóór de eerste beweging in gegenereerde gcode
-  let playbackMoveIndex = 0;
+  const PREVIEW_TICK_MS = 67; // 15fps
+  let playbackElapsedMs = 0;
+  let playbackStartTime = 0;
   let isPlaying = false;
-  let playbackTimeoutId = null;
+  let playbackIntervalId = null;
   let playbackSpeedMultiplier = 1; // 0.5–15× feedrate
+  /** @type {number[]} cumulatieve segmentduur in ms (index i = eindtijd van segment i→i+1), gebouwd bij start playback */
+  let playbackCumulativeTimesMs = [];
+  let playbackTotalDurationMs = 0;
 
   /**
    * Berekent de preview-duur in ms voor het segment van move index naar index+1.
@@ -6430,25 +6635,88 @@ function setupUI() {
     return Math.max(1, tijdMs / speedMultiplier);
   }
 
+  /**
+   * Bouwt cumulatieve tijden voor het volledige pad (speedMultiplier=1 voor natuurlijke duur).
+   * @param {ToolpathMove[]} moves
+   * @param {number} feedrateMmMin
+   * @returns {{ cumulative: number[], total: number }}
+   */
+  function buildCumulativeTimesMs(moves, feedrateMmMin) {
+    const cumulative = [0];
+    for (let i = 0; i < moves.length - 1; i++) {
+      const seg = getSegmentDurationMs(moves, i, feedrateMmMin, 1);
+      cumulative.push(cumulative[cumulative.length - 1] + seg);
+    }
+    return { cumulative, total: cumulative[cumulative.length - 1] ?? 0 };
+  }
+
+  /**
+   * Berekent geïnterpoleerde positie op het pad bij gegeven verstreken tijd.
+   * @param {number[]} cumulativeTimesMs
+   * @param {ToolpathMove[]} moves
+   * @param {number} elapsedMs
+   * @returns {{ x: number, y: number, z: number, segmentIndex: number, t: number } | null}
+   */
+  function getPositionAtTimeMs(cumulativeTimesMs, moves, elapsedMs) {
+    if (moves.length === 0) return null;
+    if (moves.length === 1) return { x: moves[0].x, y: moves[0].y, z: moves[0].z, segmentIndex: 0, t: 0 };
+    const totalMs = cumulativeTimesMs[cumulativeTimesMs.length - 1] ?? 0;
+    if (elapsedMs <= 0) return { ...moves[0], segmentIndex: 0, t: 0 };
+    if (elapsedMs >= totalMs) {
+      const last = moves[moves.length - 1];
+      return { x: last.x, y: last.y, z: last.z, segmentIndex: moves.length - 2, t: 1 };
+    }
+    let i = 0;
+    while (i < cumulativeTimesMs.length - 1 && cumulativeTimesMs[i + 1] <= elapsedMs) i++;
+    const t0 = cumulativeTimesMs[i];
+    const t1 = cumulativeTimesMs[i + 1];
+    const t = t1 > t0 ? (elapsedMs - t0) / (t1 - t0) : 1;
+    const prev = moves[i];
+    const next = moves[i + 1];
+    return {
+      x: prev.x + t * ((Number.isFinite(next.x) ? next.x : 0) - (Number.isFinite(prev.x) ? prev.x : 0)),
+      y: prev.y + t * ((Number.isFinite(next.y) ? next.y : 0) - (Number.isFinite(prev.y) ? prev.y : 0)),
+      z: prev.z + t * ((Number.isFinite(next.z) ? next.z : 0) - (Number.isFinite(prev.z) ? prev.z : 0)),
+      segmentIndex: i,
+      t,
+    };
+  }
+
   function getDisplayedColumn() {
-    if (isPlaying && lastToolpath.moves.length > 0 && playbackMoveIndex < lastToolpath.moves.length) {
-      const m = lastToolpath.moves[playbackMoveIndex];
-      const isLettersOutline = shapeSelect.value === ShapeType.LETTERS && (letterModeSelect?.value || "outline") === "outline";
-      const diameter = isLettersOutline ? 0.5 : (toolDiameterInput ? toNumber(toolDiameterInput.value) || 6 : 6);
-      return { x: m.x, y: m.y, z: m.z, diameter };
+    if (isPlaying && lastToolpath.moves.length > 0 && playbackCumulativeTimesMs.length > 0) {
+      const elapsedMs = (Date.now() - playbackStartTime) * playbackSpeedMultiplier;
+      const pos = getPositionAtTimeMs(playbackCumulativeTimesMs, lastToolpath.moves, elapsedMs);
+      if (pos) {
+        const isLettersOutline = shapeSelect.value === ShapeType.LETTERS && (letterModeSelect?.value || "outline") === "outline";
+        const diameter = isLettersOutline ? 0.5 : (toolDiameterInput ? toNumber(toolDiameterInput.value) || 6 : 6);
+        return { x: pos.x, y: pos.y, z: pos.z, diameter };
+      }
     }
     return cursorColumnForPreview;
   }
 
-  function syncGcodeCursorToPlayback() {
+  function getPlaybackLineIndex() {
+    if (!isPlaying || lastToolpath.moves.length === 0 || playbackCumulativeTimesMs.length === 0) return 0;
+    const elapsedMs = (Date.now() - playbackStartTime) * playbackSpeedMultiplier;
+    const pos = getPositionAtTimeMs(playbackCumulativeTimesMs, lastToolpath.moves, elapsedMs);
+    if (!pos) return 0;
+    const lineIndex = pos.t > 0.5 ? pos.segmentIndex + 1 : pos.segmentIndex;
+    return GCODE_HEADER_LINES + Math.min(lineIndex, lastToolpath.moves.length - 1);
+  }
+
+  /**
+   * @param {number} [forceLineIndex] - indien gegeven, gebruik deze regel in plaats van playback-positie (bijv. bij reset)
+   * @param {boolean} [stealFocus] - indien true, focus op gcode-veld (standaard false tijdens playback; voorkomt dat scrollen/klikken onderbroken wordt)
+   */
+  function syncGcodeCursorToPlayback(forceLineIndex, stealFocus = false) {
     if (!gcodeOutput || !gcodeOutput.value) return;
     const lines = gcodeOutput.value.split("\n");
-    const lineIndex = GCODE_HEADER_LINES + playbackMoveIndex;
+    const lineIndex = forceLineIndex ?? getPlaybackLineIndex();
     if (lineIndex < 0 || lineIndex >= lines.length) return;
     let offset = 0;
     for (let j = 0; j < lineIndex && j < lines.length; j++) offset += lines[j].length + 1;
     gcodeOutput.selectionStart = gcodeOutput.selectionEnd = offset;
-    gcodeOutput.focus();
+    if (stealFocus) gcodeOutput.focus();
     updateGcodeLineHighlight();
   }
 
@@ -6456,7 +6724,7 @@ function setupUI() {
     if (!gcodeOutput) return 0;
     const text = gcodeOutput.value;
     if (isPlaying && lastToolpath.moves.length > 0) {
-      return Math.min(GCODE_HEADER_LINES + playbackMoveIndex, text.split("\n").length - 1);
+      return Math.min(getPlaybackLineIndex(), text.split("\n").length - 1);
     }
     const pos = gcodeOutput.selectionStart;
     return Math.max(0, text.substring(0, pos).split("\n").length - 1);
@@ -6510,12 +6778,14 @@ function setupUI() {
     gcodeLineHighlightBar.style.top = `${paddingTop + clampedIndex * lineHeight}px`;
     gcodeLineHighlightBar.style.height = `${lineHeight}px`;
 
-    // Mee scrollen met preview: actieve regel zichtbaar houden (grofweg gecentreerd)
-    const targetScrollTop = Math.max(
-      0,
-      paddingTop + clampedIndex * lineHeight - gcodeOutput.clientHeight / 2 + lineHeight / 2
-    );
-    gcodeOutput.scrollTop = Math.round(targetScrollTop);
+    // Alleen mee scrollen als gcode-veld focus heeft (anders niet storen bij scrollen/klikken elders)
+    if (document.activeElement === gcodeOutput) {
+      const targetScrollTop = Math.max(
+        0,
+        paddingTop + clampedIndex * lineHeight - gcodeOutput.clientHeight / 2 + lineHeight / 2
+      );
+      gcodeOutput.scrollTop = Math.round(targetScrollTop);
+    }
     syncGcodeOverlayScroll();
   }
 
@@ -6525,42 +6795,35 @@ function setupUI() {
     }
   }
 
-  function stopPlayback() {
-    isPlaying = false;
-    if (playbackTimeoutId !== null) {
-      clearTimeout(playbackTimeoutId);
-      playbackTimeoutId = null;
-    }
-    if (previewCanvas) renderPreview(lastToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
-  }
-
-  function scheduleNextPlaybackStep() {
-    if (!isPlaying || !lastToolpath.moves.length) return;
+  function getFeedrateMmMin() {
     const feedrateInput = document.getElementById("feedrate");
     const feedrateDisplay =
       feedrateInput && feedrateInput instanceof HTMLInputElement
         ? toNumber(feedrateInput.value) || 800
         : 800;
-    // Toolpath distances are in mm; feedrate must be mm/min (inch mode uses IPM, so convert)
-    const feedrateMmMin = getDisplayUnit() === "inch" ? toMm(feedrateDisplay, "inch") : feedrateDisplay;
-    const delay = getSegmentDurationMs(lastToolpath.moves, playbackMoveIndex, feedrateMmMin, playbackSpeedMultiplier);
-    if (delay > 0) {
-      playbackTimeoutId = setTimeout(advancePlayback, delay);
-    }
+    return getDisplayUnit() === "inch" ? toMm(feedrateDisplay, "inch") : feedrateDisplay;
   }
 
-  function advancePlayback() {
-    if (!lastToolpath.moves.length) return;
-    playbackMoveIndex++;
-    if (playbackMoveIndex >= lastToolpath.moves.length) {
-      playbackMoveIndex = lastToolpath.moves.length - 1;
+  function playbackTick() {
+    if (!isPlaying || !lastToolpath.moves.length) return;
+    const elapsedMs = (Date.now() - playbackStartTime) * playbackSpeedMultiplier;
+    if (elapsedMs >= playbackTotalDurationMs) {
+      playbackElapsedMs = playbackTotalDurationMs;
       stopPlayback();
       updatePlaybackButtonsState();
       return;
     }
     syncGcodeCursorToPlayback();
     if (previewCanvas) renderPreview(lastToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
-    scheduleNextPlaybackStep();
+  }
+
+  function stopPlayback() {
+    isPlaying = false;
+    if (playbackIntervalId !== null) {
+      clearInterval(playbackIntervalId);
+      playbackIntervalId = null;
+    }
+    if (previewCanvas) renderPreview(lastToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
   }
 
   const playPauseBtn = /** @type {HTMLButtonElement} */ (document.getElementById("preview-play-pause-btn"));
@@ -6608,13 +6871,19 @@ function setupUI() {
     playPauseBtn.addEventListener("click", () => {
       if (!lastToolpath.moves.length) return;
       if (isPlaying) {
+        playbackElapsedMs = (Date.now() - playbackStartTime) * playbackSpeedMultiplier;
         stopPlayback();
       } else {
+        const feedrateMmMin = getFeedrateMmMin();
+        const { cumulative, total } = buildCumulativeTimesMs(lastToolpath.moves, feedrateMmMin);
+        playbackCumulativeTimesMs = cumulative;
+        playbackTotalDurationMs = total;
+        if (playbackTotalDurationMs <= 0) return;
+        playbackStartTime = Date.now() - playbackElapsedMs / playbackSpeedMultiplier;
         isPlaying = true;
-        if (playbackMoveIndex >= lastToolpath.moves.length) playbackMoveIndex = 0;
+        playbackIntervalId = setInterval(playbackTick, PREVIEW_TICK_MS);
         syncGcodeCursorToPlayback();
         if (previewCanvas) renderPreview(lastToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
-        scheduleNextPlaybackStep();
       }
       updatePlaybackButtonsState();
     });
@@ -6622,9 +6891,9 @@ function setupUI() {
   if (resetBtn) {
     resetBtn.addEventListener("click", () => {
       if (!lastToolpath.moves.length) return;
-      playbackMoveIndex = 0;
+      playbackElapsedMs = 0;
       stopPlayback();
-      syncGcodeCursorToPlayback();
+      syncGcodeCursorToPlayback(GCODE_HEADER_LINES);
       if (previewCanvas) renderPreview(lastToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
       updatePlaybackButtonsState();
     });
@@ -6635,10 +6904,9 @@ function setupUI() {
       playbackSpeedMultiplier = speedSliderToMultiplier(norm);
       speedSlider.value = String(speedMultiplierToSlider(playbackSpeedMultiplier));
       if (speedValueEl) speedValueEl.textContent = formatMultiplierForDisplay(playbackSpeedMultiplier);
-      if (isPlaying && playbackTimeoutId !== null) {
-        clearTimeout(playbackTimeoutId);
-        playbackTimeoutId = null;
-        scheduleNextPlaybackStep();
+      if (isPlaying && playbackIntervalId !== null) {
+        playbackElapsedMs = (Date.now() - playbackStartTime) * playbackSpeedMultiplier;
+        playbackStartTime = Date.now() - playbackElapsedMs / playbackSpeedMultiplier;
       }
     });
   }
@@ -6748,7 +7016,7 @@ function setupUI() {
         if (copyBtn) copyBtn.disabled = true;
         lastToolpath = { moves: [] };
         stopPlayback();
-        playbackMoveIndex = 0;
+        playbackElapsedMs = 0;
         updatePlaybackButtonsState();
         if (previewCanvas) renderPreview(lastToolpath, previewCanvas, currentPreviewView);
         updateGcodeLineHighlight();
@@ -6770,7 +7038,7 @@ function setupUI() {
       const gcode = toolpathToGcode(toolpath, validation.params);
 
       stopPlayback();
-      playbackMoveIndex = 0;
+      playbackElapsedMs = 0;
       updatePlaybackButtonsState();
 
       if (gcodeOutput) {
