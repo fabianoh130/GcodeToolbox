@@ -36,6 +36,11 @@ Always review the generated code before running it on your machine.
 This project was created out of my own need for a practical toolbox, and I want to make it available for others. I am not responsible for any damage, errors, or issues caused by using this app or the code it generates. Use it at your own risk.
 
 # Version
+##
+* Fixed minor bugs
+* Preview smoothing (15fps interval calculation)
+* Added Circulair hole patern
+
 ## V3.1
 * Fixed minor bugs
 * The Preview now indicates when settings have been modified after generation
