@@ -999,6 +999,11 @@ function readInputsFromForm() {
   const spindleSpeedEnabled = isSimpleMode ? false : (/** @type {HTMLInputElement} */ (g("spindle-speed-enabled"))?.checked ?? false);
   const spindleSpeed = spindleSpeedEnabled ? toNumber(g("spindle-speed")?.value) : null;
 
+  const finishingPassEnabled = isSimpleMode ? false : (/** @type {HTMLInputElement} */ (g("finishing-pass-enabled"))?.checked ?? false);
+  const finishingPassDistance = finishingPassEnabled
+    ? toMm(toNumber(g("finishing-pass-distance")?.value), displayUnit)
+    : 0;
+
   const cutParams = {
     toolDiameter,
     totalDepth,
@@ -1009,6 +1014,8 @@ function readInputsFromForm() {
     leadInAboveMm: isSimpleMode ? 2 : toMm(toNumber(g("lead-in-above").value), displayUnit),
     spindleSpeedEnabled,
     spindleSpeed: Number.isFinite(spindleSpeed) && spindleSpeed > 0 ? spindleSpeed : null,
+    finishingPassEnabled,
+    finishingPassDistance: Number.isFinite(finishingPassDistance) && finishingPassDistance >= 0 ? finishingPassDistance : 0,
   };
 
   const originParams = {
@@ -1125,6 +1132,9 @@ function getParamsSnapshotReadOnly() {
     stepoverMm = Math.min(stepoverMm, Number.isFinite(toolD) ? toolD : stepoverMm);
   }
 
+  const finPassEnabled = isSimple ? false : (el("finishing-pass-enabled")?.checked ?? false);
+  const finPassDist = finPassEnabled ? (vm("finishing-pass-distance") || 0) : 0;
+
   const cp = {
     toolDiameter: toolD,
     totalDepth: totalD,
@@ -1135,6 +1145,8 @@ function getParamsSnapshotReadOnly() {
     leadInAboveMm: isSimple ? 2 : vm("lead-in-above"),
     spindleSpeedEnabled: isSimple ? false : (el("spindle-speed-enabled")?.checked ?? false),
     spindleSpeed: null,
+    finishingPassEnabled: finPassEnabled,
+    finishingPassDistance: Number.isFinite(finPassDist) && finPassDist >= 0 ? finPassDist : 0,
   };
   const ss = v("spindle-speed");
   if (cp.spindleSpeedEnabled && Number.isFinite(ss) && ss > 0) cp.spindleSpeed = ss;
@@ -1235,6 +1247,7 @@ function validateInputs(raw) {
   if (raw.cutParams.entryMethod === EntryMethod.RAMP) {
     assertPositive(raw.cutParams.rampAngleMax, "field.rampAngle");
   }
+
 
   if (raw.operation === OperationType.CONTOUR && raw.tabs?.enabled) {
     assertPositive(raw.tabs.interval, "field.tabInterval");
@@ -1762,11 +1775,11 @@ function ringsToPathWithCurvedTransitions(rings) {
  * - Cirkel/ellipse: schalen
  * - Vierkant/rechthoek: offsetten van de randen
  */
-function generatePocketRings(shape, shapeParams, stepover, toolRadius) {
+function generatePocketRings(shape, shapeParams, stepover, toolRadius, outerOffset = 0) {
   const rings = [];
 
   if (shape === ShapeType.CIRCLE) {
-    const maxR = shapeParams.diameter / 2 - toolRadius;
+    const maxR = shapeParams.diameter / 2 - toolRadius - outerOffset;
     if (maxR <= 0) return [];
     const SEGMENTS = segmentsForCircleRadius(maxR);
     for (let r = toolRadius; r <= maxR + 1e-6; r += stepover) {
@@ -1778,8 +1791,8 @@ function generatePocketRings(shape, shapeParams, stepover, toolRadius) {
       rings.push(pts);
     }
   } else if (shape === ShapeType.ELLIPSE) {
-    const rxMax = shapeParams.major / 2 - toolRadius;
-    const ryMax = shapeParams.minor / 2 - toolRadius;
+    const rxMax = shapeParams.major / 2 - toolRadius - outerOffset;
+    const ryMax = shapeParams.minor / 2 - toolRadius - outerOffset;
     if (rxMax <= 0 || ryMax <= 0) return [];
     const SEGMENTS = segmentsForCircleRadius(Math.max(rxMax, ryMax));
     // gebruik een factor op basis van minimale straal
@@ -1801,13 +1814,13 @@ function generatePocketRings(shape, shapeParams, stepover, toolRadius) {
         ? shapeParams.size
         : shapeParams.width) /
         2 -
-      toolRadius;
+      toolRadius - outerOffset;
     const hh =
       (shape === ShapeType.SQUARE
         ? shapeParams.size
         : shapeParams.height) /
         2 -
-      toolRadius;
+      toolRadius - outerOffset;
     if (hw <= 0 || hh <= 0) return [];
 
     const userR = Number.isFinite(shapeParams.cornerRadius) ? shapeParams.cornerRadius : 0;
@@ -1824,7 +1837,7 @@ function generatePocketRings(shape, shapeParams, stepover, toolRadius) {
   } else if (shape === ShapeType.HEXAGON) {
     const H = shapeParams.height;
     const apothem = H / 2;
-    const maxScale = Math.max(0, (apothem - toolRadius) / apothem);
+    const maxScale = Math.max(0, (apothem - toolRadius - outerOffset) / apothem);
     if (maxScale <= 0) return [];
     for (let scale = maxScale; scale >= 1e-9; scale -= stepover / apothem) {
       if (scale <= 0) break;
@@ -1838,14 +1851,61 @@ function generatePocketRings(shape, shapeParams, stepover, toolRadius) {
 }
 
 /**
+ * Genereert de nabewerking-contour voor een pocket: één gesloten pad op de werkelijke
+ * pocketwand (toolcenter op pocketgrens − toolRadius). Gebruikt voor de nabewerkingslaag
+ * na het grof-frezen binnen de outerOffset.
+ * Geeft null terug als de pocket te klein is voor de freesdiameter.
+ */
+function generatePocketFinishingContour(shape, shapeParams, toolRadius) {
+  if (shape === ShapeType.CIRCLE) {
+    const r = shapeParams.diameter / 2 - toolRadius;
+    if (r <= 0) return null;
+    const segments = segmentsForCircleRadius(r);
+    const pts = [];
+    for (let i = 0; i <= segments; i++) {
+      const angle = (i / segments) * 2 * Math.PI;
+      pts.push({ x: r * Math.cos(angle), y: r * Math.sin(angle), z: 0 });
+    }
+    return pts;
+  } else if (shape === ShapeType.ELLIPSE) {
+    const rx = shapeParams.major / 2 - toolRadius;
+    const ry = shapeParams.minor / 2 - toolRadius;
+    if (rx <= 0 || ry <= 0) return null;
+    const segments = segmentsForCircleRadius(Math.max(rx, ry));
+    const pts = [];
+    for (let i = 0; i <= segments; i++) {
+      const angle = (i / segments) * 2 * Math.PI;
+      pts.push({ x: rx * Math.cos(angle), y: ry * Math.sin(angle), z: 0 });
+    }
+    return pts;
+  } else if (shape === ShapeType.SQUARE || shape === ShapeType.RECTANGLE) {
+    const hw = (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.width) / 2 - toolRadius;
+    const hh = (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.height) / 2 - toolRadius;
+    if (hw <= 0 || hh <= 0) return null;
+    const userR = Number.isFinite(shapeParams.cornerRadius) ? shapeParams.cornerRadius : 0;
+    const rEff = Math.max(0, Math.min(userR - toolRadius, hw, hh));
+    return generateRoundedRectPoints(hw, hh, rEff);
+  } else if (shape === ShapeType.HEXAGON) {
+    const apothem = shapeParams.height / 2;
+    const scale = Math.max(0, (apothem - toolRadius) / apothem);
+    if (scale <= 0) return null;
+    const verts = getHexagonVertices(shapeParams.height, scale);
+    const pts = verts.map((v) => ({ x: v.x, y: v.y, z: 0 }));
+    pts.push({ x: verts[0].x, y: verts[0].y, z: 0 }); // sluiten
+    return pts;
+  }
+  return null;
+}
+
+/**
  * Spiraal-pocket voor cirkel: start- en eindcirkel + spiraal ertussen.
  * De buitenste ring ligt op (pocketgrens − toolRadius) zodat de snijkant van de frees
  * precies op de opgegeven diameter komt; de pocket wordt dus niet te groot.
  * Ondersteunt ook pockets kleiner dan 2× freesdiameter (bv. 10mm pocket, 6mm frees).
  */
-function generateSpiralPocketCircle(shapeParams, stepover, toolRadius) {
+function generateSpiralPocketCircle(shapeParams, stepover, toolRadius, outerOffset = 0) {
   const pocketBoundaryRadius = shapeParams.diameter / 2; // gewenste rand van de pocket (snijkant)
-  const outerRingRadius = pocketBoundaryRadius - toolRadius; // toolcenter op rand: snijkant = boundary
+  const outerRingRadius = pocketBoundaryRadius - toolRadius - outerOffset; // toolcenter op rand: snijkant = boundary
   if (outerRingRadius <= 0) return [];
 
   const segments = segmentsForCircleRadius(pocketBoundaryRadius);
@@ -1916,9 +1976,9 @@ function generateSpiralPocketCircle(shapeParams, stepover, toolRadius) {
  * Buitenellips op (halve as − toolRadius) zodat de snijkant op de opgegeven grens ligt.
  * Bij zeer kleine ellips (kleiner dan 2× frees): alleen één ellips op de grens.
  */
-function generateSpiralPocketEllipse(shapeParams, stepover, toolRadius) {
-  const rxMax = shapeParams.major / 2 - toolRadius;   // toolcenter: snijkant op major/2
-  const ryMax = shapeParams.minor / 2 - toolRadius;  // toolcenter: snijkant op minor/2
+function generateSpiralPocketEllipse(shapeParams, stepover, toolRadius, outerOffset = 0) {
+  const rxMax = shapeParams.major / 2 - toolRadius - outerOffset;   // toolcenter: snijkant op major/2
+  const ryMax = shapeParams.minor / 2 - toolRadius - outerOffset;  // toolcenter: snijkant op minor/2
   if (rxMax <= 0 || ryMax <= 0) return [];
 
   const segments = segmentsForCircleRadius(Math.max(rxMax, ryMax));
@@ -2075,10 +2135,10 @@ function generateSpiralPocketRectangle(shape, shapeParams, stepover, toolRadius)
  * Spiraal-pocket voor hexagon: van midden naar buiten in ringen.
  * Hexagon met platte boven- en onderkant, grootte bepaald door hoogte.
  */
-function generateSpiralPocketHexagon(shapeParams, stepover, toolRadius) {
+function generateSpiralPocketHexagon(shapeParams, stepover, toolRadius, outerOffset = 0) {
   const H = shapeParams.height;
   const apothem = H / 2;
-  const maxScale = Math.max(0, (apothem - toolRadius) / apothem);
+  const maxScale = Math.max(0, (apothem - toolRadius - outerOffset) / apothem);
   if (maxScale <= 0) {
     throw new Error(t("error.pocketSmallerThanTool"));
   }
@@ -2632,9 +2692,10 @@ function generateToolpath(params) {
       const contourIsHole = (path) => polygonSignedArea2(getPts(path)) < 0;
       const minSize = 1.2 * cutParams.toolDiameter;
 
-      /** @type {{ innerBoundary: { x: number, y: number, z: number }[] }[]} */
+      /** @type {{ roughingBoundary: { x: number, y: number, z: number }[], finishingBoundary: { x: number, y: number, z: number }[] }[]} */
       const pocketable = [];
       let lastFailReason = "";
+      const letterFpDist = (cutParams.finishingPassEnabled && cutParams.finishingPassDistance > 0) ? cutParams.finishingPassDistance : 0;
       for (let i = 0; i < letterPaths.length; i++) {
         const path = letterPaths[i];
         const pts = getPts(path);
@@ -2642,10 +2703,19 @@ function generateToolpath(params) {
         const isHole = contourIsHole(path);
         const offset = isHole ? -toolRadius : toolRadius;
         const debug = {};
-        let inner = contourOffset(path, offset, debug);
-        if (!inner && Math.abs(offset) > 1e-6) inner = contourOffset(path, offset * 0.98, debug);
-        if (inner && inner.length >= 3) pocketable.push({ innerBoundary: inner });
-        else if (debug.failReason) lastFailReason = debug.failReason;
+        let finishingBoundary = contourOffset(path, offset, debug);
+        if (!finishingBoundary && Math.abs(offset) > 1e-6) finishingBoundary = contourOffset(path, offset * 0.98, debug);
+        if (!finishingBoundary || finishingBoundary.length < 3) {
+          if (debug.failReason) lastFailReason = debug.failReason;
+          continue;
+        }
+        let roughingBoundary = finishingBoundary;
+        if (letterFpDist > 0) {
+          const roughOffset = isHole ? -letterFpDist : letterFpDist;
+          const rb = contourOffset(finishingBoundary, roughOffset);
+          if (rb && rb.length >= 3) roughingBoundary = rb;
+        }
+        pocketable.push({ roughingBoundary, finishingBoundary });
       }
       if (pocketable.length === 0) {
         throw new Error(
@@ -2654,8 +2724,8 @@ function generateToolpath(params) {
       }
 
       depths.forEach((depthZ) => {
-        pocketable.forEach(({ innerBoundary }, idxContour) => {
-          const rings = pocketRingsFromInnerContour(innerBoundary, cutParams.stepover);
+        pocketable.forEach(({ roughingBoundary }, idxContour) => {
+          const rings = pocketRingsFromInnerContour(roughingBoundary, cutParams.stepover);
           if (!rings.length) return;
           const fromInsideOut = rings.slice().reverse();
           if (idxContour > 0) {
@@ -2669,6 +2739,16 @@ function generateToolpath(params) {
           });
         });
       });
+      // Nabewerkingslaag letters: één contour per letter op de werkelijke pocketgrens, alleen op volledige diepte
+      if (letterFpDist > 0 && depths.length > 0) {
+        const finalDepth = depths[depths.length - 1];
+        pocketable.forEach(({ finishingBoundary }) => {
+          if (finishingBoundary.length < 2) return;
+          const last = moves[moves.length - 1];
+          if (last && last.z < safeZ - 1e-6) moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
+          addLayerForPath(moves, finishingBoundary, finalDepth, cutParams, false, entryMethod, true, safeZ, undefined, true, true, toolRadius);
+        });
+      }
     } else {
       // Outline: omtrek van elke letter volgen
       depths.forEach((depthZ) => {
@@ -2740,6 +2820,7 @@ function generateToolpath(params) {
       /** @type {{ innerBoundary: { x: number, y: number, z: number }[] }[]} */
       const pocketable = [];
       let lastFailReason = "";
+      const dxfFpDist = (cutParams.finishingPassEnabled && cutParams.finishingPassDistance > 0) ? cutParams.finishingPassDistance : 0;
       for (let i = 0; i < dxfContours.length; i++) {
         const path = dxfContours[i];
         const pts = getPts(path);
@@ -2747,10 +2828,21 @@ function generateToolpath(params) {
         const isHole = contourIsHole(path);
         const offset = isHole ? -toolRadius : toolRadius;
         const debug = {};
-        let inner = contourOffset(path, offset, debug);
-        if (!inner && Math.abs(offset) > 1e-6) inner = contourOffset(path, offset * 0.98, debug);
-        if (inner && inner.length >= 3) pocketable.push({ innerBoundary: inner });
-        else if (debug.failReason) lastFailReason = debug.failReason;
+        let finishingBoundary = contourOffset(path, offset, debug);
+        if (!finishingBoundary && Math.abs(offset) > 1e-6) finishingBoundary = contourOffset(path, offset * 0.98, debug);
+        if (!finishingBoundary || finishingBoundary.length < 3) {
+          if (debug.failReason) lastFailReason = debug.failReason;
+          continue;
+        }
+        let roughingBoundary = finishingBoundary;
+        if (dxfFpDist > 0) {
+          // Verschuif de binnengrens verder naar binnen voor de grofbewerking
+          const roughOffset = isHole ? -dxfFpDist : dxfFpDist;
+          const rb = contourOffset(finishingBoundary, roughOffset);
+          if (rb && rb.length >= 3) roughingBoundary = rb;
+          // Als de extra offset te groot is (pocket collapst) valt roughingBoundary terug op finishingBoundary
+        }
+        pocketable.push({ roughingBoundary, finishingBoundary });
       }
       if (pocketable.length === 0) {
         throw new Error(
@@ -2758,8 +2850,8 @@ function generateToolpath(params) {
         );
       }
       depths.forEach((depthZ) => {
-        pocketable.forEach(({ innerBoundary }, idxContour) => {
-          const rings = pocketRingsFromInnerContour(innerBoundary, cutParams.stepover);
+        pocketable.forEach(({ roughingBoundary }, idxContour) => {
+          const rings = pocketRingsFromInnerContour(roughingBoundary, cutParams.stepover);
           if (!rings.length) return;
           const fromInsideOut = rings.slice().reverse();
           if (idxContour > 0) {
@@ -2773,6 +2865,16 @@ function generateToolpath(params) {
           });
         });
       });
+      // Nabewerkingslaag DXF: één contour per vormpunt op de werkelijke pocketgrens, alleen op volledige diepte
+      if (dxfFpDist > 0 && depths.length > 0) {
+        const finalDepth = depths[depths.length - 1];
+        pocketable.forEach(({ finishingBoundary }, idxContour) => {
+          if (finishingBoundary.length < 2) return;
+          const last = moves[moves.length - 1];
+          if (last && last.z < safeZ - 1e-6) moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
+          addLayerForPath(moves, finishingBoundary, finalDepth, cutParams, false, entryMethod, true, safeZ, undefined, true, true, toolRadius);
+        });
+      }
     } else {
       let contourPath = null;
       let tabConfig = null;
@@ -3189,23 +3291,24 @@ function generateToolpath(params) {
         }
       }
     } else {
+      const fpDist = (cutParams.finishingPassEnabled && cutParams.finishingPassDistance > 0) ? cutParams.finishingPassDistance : 0;
       if (shape === ShapeType.CIRCLE) {
-        pocketPaths = [generateSpiralPocketCircle(shapeParams, cutParams.stepover, toolRadius)];
+        pocketPaths = [generateSpiralPocketCircle(shapeParams, cutParams.stepover, toolRadius, fpDist)];
       } else if (shape === ShapeType.ELLIPSE) {
-        pocketPaths = [generateSpiralPocketEllipse(shapeParams, cutParams.stepover, toolRadius)];
+        pocketPaths = [generateSpiralPocketEllipse(shapeParams, cutParams.stepover, toolRadius, fpDist)];
       } else if (shape === ShapeType.SQUARE || shape === ShapeType.RECTANGLE) {
-        const rings = generatePocketRings(shape, shapeParams, cutParams.stepover, toolRadius);
+        const rings = generatePocketRings(shape, shapeParams, cutParams.stepover, toolRadius, fpDist);
         const fromInsideOut = rings.length > 0 ? rings.slice().reverse() : [];
         pocketPaths = fromInsideOut.length > 0 ? [ringsToPathWithCurvedTransitions(fromInsideOut)] : [];
       } else if (shape === ShapeType.HEXAGON) {
-        pocketPaths = [generateSpiralPocketHexagon(shapeParams, cutParams.stepover, toolRadius)];
+        pocketPaths = [generateSpiralPocketHexagon(shapeParams, cutParams.stepover, toolRadius, fpDist)];
       } else if (shape === ShapeType.PATTERNED_HOLES) {
         const countX = Math.max(1, shapeParams.countX || 1);
         const countY = Math.max(1, shapeParams.countY || 1);
         const spacingX = shapeParams.spacingX || 96;
         const spacingY = shapeParams.spacingY || 96;
         const holeShapeParams = { diameter: shapeParams.diameter };
-        const singlePath = generateSpiralPocketCircle(holeShapeParams, cutParams.stepover, toolRadius);
+        const singlePath = generateSpiralPocketCircle(holeShapeParams, cutParams.stepover, toolRadius, fpDist);
         pocketPaths = [];
         for (let j = 0; j < countY; j++) {
           for (let i = 0; i < countX; i++) {
@@ -3221,7 +3324,7 @@ function generateToolpath(params) {
         const startAngleDeg = Math.max(0, Math.min(360, shapeParams.startAngle ?? 0));
         const startAngleRad = Math.PI / 2 - (startAngleDeg * Math.PI / 180);
         const holeShapeParams = { diameter: shapeParams.diameter };
-        const singlePath = generateSpiralPocketCircle(holeShapeParams, cutParams.stepover, toolRadius);
+        const singlePath = generateSpiralPocketCircle(holeShapeParams, cutParams.stepover, toolRadius, fpDist);
         pocketPaths = [];
         for (let i = 0; i < count; i++) {
           const angle = startAngleRad + (2 * Math.PI * i) / count;
@@ -3232,7 +3335,7 @@ function generateToolpath(params) {
         }
         if (shapeParams.holeInCenter && Number.isFinite(shapeParams.centerHoleDiameter) && shapeParams.centerHoleDiameter > 0) {
           const centerHoleParams = { diameter: shapeParams.centerHoleDiameter };
-          const centerPath = generateSpiralPocketCircle(centerHoleParams, cutParams.stepover, toolRadius);
+          const centerPath = generateSpiralPocketCircle(centerHoleParams, cutParams.stepover, toolRadius, fpDist);
           pocketPaths.push(centerPath);
         }
       }
@@ -3268,111 +3371,53 @@ function generateToolpath(params) {
   const entryMethod = cutParams.entryMethod;
   const safeZ = cutParams.safeHeight;
 
-  depths.forEach((depthZ, depthIndex) => {
-    if (operation === OperationType.CONTOUR) {
-      if (contourPaths && contourPaths.length > 0) {
-        const isLastLayer = depthIndex === depths.length - 1;
-        const toolRadiusContour = cutParams.toolDiameter / 2;
-        const maxHelixRadiusContour = contourType === "inside" ? Math.max(0, (shapeParams.diameter / 2) - toolRadiusContour) : undefined;
-        contourPaths.forEach((path, idx) => {
-          if (path.length < 2) return;
-          const center = pocketCenters[idx] || { x: 0, y: 0 };
-          addLayerForPath(
-            moves,
-            path,
-            depthZ,
-            cutParams,
-            plungeOutside && idx === 0,
-            entryMethod,
-            idx === 0,
-            safeZ,
-            undefined,
-            true,
-            true,
-            toolRadiusContour,
-            isLastLayer && idx === contourPaths.length - 1,
-            maxHelixRadiusContour,
-            center.x,
-            center.y
-          );
-          if (idx < contourPaths.length - 1) {
-            const last = moves[moves.length - 1];
-            if (last && last.z < safeZ - 1e-6) {
-              moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
-            }
-          }
-        });
-      } else if (contourPath && contourPath.length >= 2) {
-        const isLastLayer = depthIndex === depths.length - 1;
-        addLayerForPath(
-          moves,
-          contourPath,
-          depthZ,
-          cutParams,
-          plungeOutside,
-          entryMethod,
-          true,
-          safeZ,
-          tabConfig,
-          contourType === "inside",
-          false,
-          0,
-          isLastLayer
-        );
-      }
-    } else if (operation === OperationType.FACING) {
-      const toolRadiusFacing = cutParams.toolDiameter / 2;
-      const isFacingShape = shape === ShapeType.FACING;
-      const hw = (isFacingShape ? shapeParams.width : (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.width)) / 2 - toolRadiusFacing;
-      const hh = (isFacingShape ? shapeParams.height : (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.height)) / 2 - toolRadiusFacing;
-      const maxHelixRadiusFacing = Math.max(0, Math.min(hw, hh));
-      facingPaths.forEach((path, idx) => {
-        addLayerForPath(
-          moves,
-          path,
-          depthZ,
-          cutParams,
-          false,
-          entryMethod,
-          idx === 0,
-          safeZ,
-          undefined,
-          false,
-          true,
-          toolRadiusFacing,
-          true,
-          maxHelixRadiusFacing,
-          0,
-          0,
-          true,
-          true  // keepToolDownBetweenPaths: geen retract tussen strips
-        );
-      });
-    } else {
-      // Pocket: één spiraalpad per laag (cirkel/ellips/rechthoek), stepover gerespecteerd
-      const toolRadiusPocket = cutParams.toolDiameter / 2;
-      let maxHelixRadiusPocket = undefined;
-      if (shape === ShapeType.CIRCLE) {
-        maxHelixRadiusPocket = Math.max(0, (shapeParams.diameter / 2) - toolRadiusPocket);
-      } else if (shape === ShapeType.ELLIPSE) {
-        const rx = (shapeParams.major || 0) / 2 - toolRadiusPocket;
-        const ry = (shapeParams.minor || 0) / 2 - toolRadiusPocket;
-        maxHelixRadiusPocket = Math.max(0, Math.min(rx, ry));
-      } else if (shape === ShapeType.SQUARE || shape === ShapeType.RECTANGLE) {
-        const hw = (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.width) / 2 - toolRadiusPocket;
-        const hh = (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.height) / 2 - toolRadiusPocket;
-        maxHelixRadiusPocket = Math.max(0, Math.min(hw, hh));
-      } else if (shape === ShapeType.HEXAGON) {
-        const apothem = (shapeParams.height || 0) / 2 - toolRadiusPocket;
-        maxHelixRadiusPocket = Math.max(0, apothem);
-      } else if (shape === ShapeType.PATTERNED_HOLES) {
-        maxHelixRadiusPocket = Math.max(0, (shapeParams.diameter / 2) - toolRadiusPocket);
-      } else if (shape === ShapeType.CIRCULAR_PATTERN_HOLES) {
-        maxHelixRadiusPocket = Math.max(0, (shapeParams.diameter / 2) - toolRadiusPocket);
-      }
-      pocketPaths.forEach((path, idx) => {
-        const outside = plungeOutside && idx === 0;
-        const center = (shape === ShapeType.PATTERNED_HOLES || shape === ShapeType.CIRCULAR_PATTERN_HOLES) && pocketCenters[idx] ? pocketCenters[idx] : { x: 0, y: 0 };
+  // toolRadiusPocket en maxHelixRadiusPocket hier berekend zodat ze beschikbaar zijn voor
+  // zowel de dieptelagen als de nabewerkingslaag achteraf.
+  const toolRadiusPocket = cutParams.toolDiameter / 2;
+  let maxHelixRadiusPocket = undefined;
+  if (operation === OperationType.POCKET) {
+    if (shape === ShapeType.CIRCLE || shape === ShapeType.PATTERNED_HOLES || shape === ShapeType.CIRCULAR_PATTERN_HOLES) {
+      maxHelixRadiusPocket = Math.max(0, (shapeParams.diameter / 2) - toolRadiusPocket);
+    } else if (shape === ShapeType.ELLIPSE) {
+      const rx = (shapeParams.major || 0) / 2 - toolRadiusPocket;
+      const ry = (shapeParams.minor || 0) / 2 - toolRadiusPocket;
+      maxHelixRadiusPocket = Math.max(0, Math.min(rx, ry));
+    } else if (shape === ShapeType.SQUARE || shape === ShapeType.RECTANGLE) {
+      const hw = (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.width) / 2 - toolRadiusPocket;
+      const hh = (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.height) / 2 - toolRadiusPocket;
+      maxHelixRadiusPocket = Math.max(0, Math.min(hw, hh));
+    } else if (shape === ShapeType.HEXAGON) {
+      const apothem = (shapeParams.height || 0) / 2 - toolRadiusPocket;
+      maxHelixRadiusPocket = Math.max(0, apothem);
+    }
+  }
+
+  // Speciaal gedrag voor PATTERNED_HOLES en CIRCULAR_PATTERN_HOLES bij pockets:
+  // eerst één gat volledig (alle depths + finishing pass), dan retract + travel naar het volgende gat.
+  if (
+    operation === OperationType.POCKET &&
+    (shape === ShapeType.CIRCULAR_PATTERN_HOLES || shape === ShapeType.PATTERNED_HOLES) &&
+    pocketPaths &&
+    pocketPaths.length > 0
+  ) {
+    const useFinishing =
+      cutParams.finishingPassEnabled &&
+      cutParams.finishingPassDistance > 0 &&
+      depths.length > 0;
+    const finalDepth = depths[depths.length - 1];
+    let finContour = null;
+    if (useFinishing) {
+      const holeShapeParams = { diameter: shapeParams.diameter };
+      finContour = generatePocketFinishingContour(ShapeType.CIRCLE, holeShapeParams, toolRadiusPocket);
+    }
+
+    pocketPaths.forEach((path, idx) => {
+      const center = pocketCenters[idx] || { x: 0, y: 0 };
+      depths.forEach((depthZ, depthIndex) => {
+        const outside = plungeOutside && depthIndex === 0 && idx === 0;
+        // Gedraagt zich als een gewone cirkel-pocket per gat: opvolgende depths gaan direct door
+        // vanaf de vorige laag (geen retracts tussen depths). Daarom hier altijd isFirstPathAtDepth = true.
+        const isFirstPathAtDepth = true;
         addLayerForPath(
           moves,
           path,
@@ -3380,7 +3425,7 @@ function generateToolpath(params) {
           cutParams,
           outside,
           entryMethod,
-          idx === 0,
+          isFirstPathAtDepth,
           safeZ,
           undefined,
           false,
@@ -3391,38 +3436,245 @@ function generateToolpath(params) {
           center.x,
           center.y
         );
-        // Bij patterned holes: na elk gat eerst naar midden, dan retract — voorkomt sporen aan de rand
-        if ((shape === ShapeType.PATTERNED_HOLES || shape === ShapeType.CIRCULAR_PATTERN_HOLES) && pocketCenters[idx]) {
-          const last = moves[moves.length - 1];
-          if (last && last.z < safeZ - 1e-6) {
-            const cx = pocketCenters[idx].x;
-            const cy = pocketCenters[idx].y;
-            const dx = cx - last.x;
-            const dy = cy - last.y;
-            const dist = Math.hypot(dx, dy);
-            const pullbackMm = 1.5;
-            if (dist > 1e-6 && pullbackMm > 0) {
-              const step = Math.min(pullbackMm, dist);
-              const endX = last.x + (dx / dist) * step;
-              const endY = last.y + (dy / dist) * step;
-              moves.push({ x: endX, y: endY, z: last.z, type: "cut" });
-              moves.push({ x: endX, y: endY, z: safeZ, type: "rapid" });
-            } else {
-              moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
-            }
-          }
-        }
       });
-      // Bij meerdere pockets (patterned holes): na elke dieptelaag retracten zodat de volgende laag
-      // niet als "continuing from previous layer" een cut-lijn naar het eerste gat maakt
-      if ((shape === ShapeType.PATTERNED_HOLES || shape === ShapeType.CIRCULAR_PATTERN_HOLES) && pocketPaths.length > 1 && depthIndex < depths.length - 1) {
+
+      // Finishing pass direct na het laatste depth van dit gat (indien ingeschakeld),
+      // net als bij een normale cirkel-pocket.
+      if (useFinishing && finContour && finContour.length >= 2) {
+        const last = moves[moves.length - 1];
+        const translatedContour = finContour.map((p) => ({
+          x: p.x + center.x,
+          y: p.y + center.y,
+          z: p.z,
+        }));
+        if (last && Math.abs(last.z - finalDepth) < 1e-6) {
+          // Frees staat al op einddiepte: direct de finishing contour op dezelfde Z, geen retract.
+          for (let i = 0; i < translatedContour.length; i++) {
+            moves.push({
+              x: translatedContour[i].x,
+              y: translatedContour[i].y,
+              z: finalDepth,
+              type: "cut",
+            });
+          }
+        } else {
+          // Onverwacht: frees niet op einddiepte, val terug op retract + plunge via addLayerForPath.
+          if (last && last.z < safeZ - 1e-6) {
+            moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
+          }
+          addLayerForPath(
+            moves,
+            translatedContour,
+            finalDepth,
+            cutParams,
+            false,
+            entryMethod,
+            true,
+            safeZ,
+            undefined,
+            false,
+            true,
+            toolRadiusPocket,
+            true,
+            maxHelixRadiusPocket,
+            center.x,
+            center.y
+          );
+        }
+      }
+
+      // Na één volledig gat (alle depths + finishing): eerst klein stukje richting midden,
+      // dan retract + travel naar volgende gat.
+      if (pocketCenters[idx]) {
         const last = moves[moves.length - 1];
         if (last && last.z < safeZ - 1e-6) {
-          moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
+          const cx = pocketCenters[idx].x;
+          const cy = pocketCenters[idx].y;
+          const dx = cx - last.x;
+          const dy = cy - last.y;
+          const dist = Math.hypot(dx, dy);
+          const pullbackMm = 1.5;
+          if (dist > 1e-6 && pullbackMm > 0) {
+            const step = Math.min(pullbackMm, dist);
+            const endX = last.x + (dx / dist) * step;
+            const endY = last.y + (dy / dist) * step;
+            moves.push({ x: endX, y: endY, z: last.z, type: "cut" });
+            moves.push({ x: endX, y: endY, z: safeZ, type: "rapid" });
+          } else {
+            moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
+          }
+        }
+      }
+    });
+  } else {
+    depths.forEach((depthZ, depthIndex) => {
+      if (operation === OperationType.CONTOUR) {
+        if (contourPaths && contourPaths.length > 0) {
+          const isLastLayer = depthIndex === depths.length - 1;
+          const toolRadiusContour = cutParams.toolDiameter / 2;
+          const maxHelixRadiusContour = contourType === "inside" ? Math.max(0, (shapeParams.diameter / 2) - toolRadiusContour) : undefined;
+          contourPaths.forEach((path, idx) => {
+            if (path.length < 2) return;
+            const center = pocketCenters[idx] || { x: 0, y: 0 };
+            addLayerForPath(
+              moves,
+              path,
+              depthZ,
+              cutParams,
+              plungeOutside && idx === 0,
+              entryMethod,
+              idx === 0,
+              safeZ,
+              undefined,
+              true,
+              true,
+              toolRadiusContour,
+              isLastLayer && idx === contourPaths.length - 1,
+              maxHelixRadiusContour,
+              center.x,
+              center.y
+            );
+            if (idx < contourPaths.length - 1) {
+              const last = moves[moves.length - 1];
+              if (last && last.z < safeZ - 1e-6) {
+                moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
+              }
+            }
+          });
+        } else if (contourPath && contourPath.length >= 2) {
+          const isLastLayer = depthIndex === depths.length - 1;
+          addLayerForPath(
+            moves,
+            contourPath,
+            depthZ,
+            cutParams,
+            plungeOutside,
+            entryMethod,
+            true,
+            safeZ,
+            tabConfig,
+            contourType === "inside",
+            false,
+            0,
+            isLastLayer
+          );
+        }
+      } else if (operation === OperationType.FACING) {
+        const toolRadiusFacing = cutParams.toolDiameter / 2;
+        const isFacingShape = shape === ShapeType.FACING;
+        const hw = (isFacingShape ? shapeParams.width : (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.width)) / 2 - toolRadiusFacing;
+        const hh = (isFacingShape ? shapeParams.height : (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.height)) / 2 - toolRadiusFacing;
+        const maxHelixRadiusFacing = Math.max(0, Math.min(hw, hh));
+        facingPaths.forEach((path, idx) => {
+          addLayerForPath(
+            moves,
+            path,
+            depthZ,
+            cutParams,
+            false,
+            entryMethod,
+            idx === 0,
+            safeZ,
+            undefined,
+            false,
+            true,
+            toolRadiusFacing,
+            true,
+            maxHelixRadiusFacing,
+            0,
+            0,
+            true,
+            true  // keepToolDownBetweenPaths: geen retract tussen strips
+          );
+        });
+      } else {
+        // Pocket: één spiraalpad per laag (cirkel/ellips/rechthoek), stepover gerespecteerd
+        // toolRadiusPocket en maxHelixRadiusPocket zijn buiten de forEach gehesen (zie boven).
+        pocketPaths.forEach((path, idx) => {
+          const outside = plungeOutside && idx === 0;
+          const center = (shape === ShapeType.PATTERNED_HOLES || shape === ShapeType.CIRCULAR_PATTERN_HOLES) && pocketCenters[idx] ? pocketCenters[idx] : { x: 0, y: 0 };
+          addLayerForPath(
+            moves,
+            path,
+            depthZ,
+            cutParams,
+            outside,
+            entryMethod,
+            idx === 0,
+            safeZ,
+            undefined,
+            false,
+            true,
+            toolRadiusPocket,
+            true,
+            maxHelixRadiusPocket,
+            center.x,
+            center.y
+          );
+          // Bij patterned holes en circular pattern holes: na elk gat eerst naar midden, dan retract — voorkomt sporen aan de rand
+          if ((shape === ShapeType.PATTERNED_HOLES || shape === ShapeType.CIRCULAR_PATTERN_HOLES) && pocketCenters[idx]) {
+            const last = moves[moves.length - 1];
+            if (last && last.z < safeZ - 1e-6) {
+              const cx = pocketCenters[idx].x;
+              const cy = pocketCenters[idx].y;
+              const dx = cx - last.x;
+              const dy = cy - last.y;
+              const dist = Math.hypot(dx, dy);
+              const pullbackMm = 1.5;
+              if (dist > 1e-6 && pullbackMm > 0) {
+                const step = Math.min(pullbackMm, dist);
+                const endX = last.x + (dx / dist) * step;
+                const endY = last.y + (dy / dist) * step;
+                moves.push({ x: endX, y: endY, z: last.z, type: "cut" });
+                moves.push({ x: endX, y: endY, z: safeZ, type: "rapid" });
+              } else {
+                moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
+              }
+            }
+          }
+        });
+        // Bij meerdere pockets (patterned holes): na elke dieptelaag retracten zodat de volgende laag
+        // niet als "continuing from previous layer" een cut-lijn naar het eerste gat maakt
+        if (shape === ShapeType.PATTERNED_HOLES && pocketPaths.length > 1 && depthIndex < depths.length - 1) {
+          const last = moves[moves.length - 1];
+          if (last && last.z < safeZ - 1e-6) {
+            moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
+          }
+        }
+      }
+    });
+  }
+
+  // Nabewerkingslaag: één contourpad op de werkelijke pocketgrens (zonder outerOffset), alleen op volledige diepte.
+  if (operation === OperationType.POCKET && cutParams.finishingPassEnabled && cutParams.finishingPassDistance > 0 && depths.length > 0) {
+    const finalDepth = depths[depths.length - 1];
+    if (shape === ShapeType.CIRCULAR_PATTERN_HOLES && shapeParams.holeInCenter && Number.isFinite(shapeParams.centerHoleDiameter) && shapeParams.centerHoleDiameter > 0) {
+      // Alleen het centrumgat van een circular pattern (de cirkels zelf zijn al per stuk afgewerkt)
+      const centerHoleParams = { diameter: shapeParams.centerHoleDiameter };
+      const centerFinContour = generatePocketFinishingContour(ShapeType.CIRCLE, centerHoleParams, toolRadiusPocket);
+      if (centerFinContour && centerFinContour.length >= 2) {
+        const last = moves[moves.length - 1];
+        if (last && last.z < safeZ - 1e-6) moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
+        addLayerForPath(moves, centerFinContour, finalDepth, cutParams, false, entryMethod, true, safeZ, undefined, false, true, toolRadiusPocket, true, maxHelixRadiusPocket, 0, 0);
+      }
+    } else if (shape !== ShapeType.PATTERNED_HOLES && shape !== ShapeType.CIRCULAR_PATTERN_HOLES) {
+      const finContour = generatePocketFinishingContour(shape, shapeParams, toolRadiusPocket);
+      if (finContour && finContour.length >= 2) {
+        const last = moves[moves.length - 1];
+        if (last && Math.abs(last.z - finalDepth) < 1e-6) {
+          // Frees zit al op einddiepte: rechtstreeks naar de startpositie van de nabewerking,
+          // geen retract + herinsteken nodig.
+          for (let i = 0; i < finContour.length; i++) {
+            moves.push({ x: finContour[i].x, y: finContour[i].y, z: finalDepth, type: "cut" });
+          }
+        } else {
+          // Onverwacht: frees niet op einddiepte, val terug op retract + plunge.
+          if (last && last.z < safeZ - 1e-6) moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
+          addLayerForPath(moves, finContour, finalDepth, cutParams, false, entryMethod, true, safeZ, undefined, false, true, toolRadiusPocket, true, maxHelixRadiusPocket, 0, 0);
         }
       }
     }
-  });
+  }
 
   // Aan het einde alleen terug naar veilige hoogte boven de laatste XY-positie,
   // niet terug naar de origin.
@@ -6338,6 +6590,25 @@ function setupUI() {
       }
     }
 
+    // Nabewerkingslaag is alleen relevant voor pocket
+    // Voor PATTERNED_HOLES is de operatie altijd pocket, ook als de select iets anders zegt
+    const effectiveOpForPocket = (shape === ShapeType.PATTERNED_HOLES) ? OperationType.POCKET : op;
+    const showPocket = effectiveOpForPocket === OperationType.POCKET;
+    document.querySelectorAll(".pocket-only").forEach((el) => {
+      el.classList.toggle("hidden", !showPocket);
+    });
+    if (!showPocket) {
+      const fpCheckbox = /** @type {HTMLInputElement} */ (document.getElementById("finishing-pass-enabled"));
+      if (fpCheckbox) fpCheckbox.checked = false;
+    }
+    // Synchroniseer de afstandsrij met de checkboxstatus (ook bij wisselen naar pocket).
+    // Gebruik getElementById direct om temporal dead zone van de const-variabelen te vermijden.
+    {
+      const fpCb = /** @type {HTMLInputElement} */ (document.getElementById("finishing-pass-enabled"));
+      const fpDRow = document.getElementById("finishing-pass-distance-row");
+      if (fpCb && fpDRow) fpDRow.classList.toggle("hidden", !fpCb.checked);
+    }
+
     // Bij wisselen naar niet-contour: tabs uitzetten en parameters verbergen; insteken naast part uit
     if (!showContour) {
       if (tabsEnabledCheckbox) {
@@ -6566,6 +6837,24 @@ function setupUI() {
     multipleDepthsCheckbox.addEventListener("click", onMultipleDepthsToggle);
   }
   updateStepdownVisibility();
+
+  // Nabewerkingslaag: finishing-pass-distance-row tonen/verbergen
+  const finishingPassCheckbox = /** @type {HTMLInputElement} */ (document.getElementById("finishing-pass-enabled"));
+  const finishingPassDistRow = document.getElementById("finishing-pass-distance-row");
+  function updateFinishingPassDistVisibility() {
+    if (!finishingPassDistRow || !finishingPassCheckbox) return;
+    if (finishingPassCheckbox.checked) {
+      finishingPassDistRow.classList.remove("hidden");
+    } else {
+      finishingPassDistRow.classList.add("hidden");
+    }
+  }
+  if (finishingPassCheckbox) {
+    finishingPassCheckbox.tabIndex = -1;
+    finishingPassCheckbox.addEventListener("change", updateFinishingPassDistVisibility);
+    finishingPassCheckbox.addEventListener("click", updateFinishingPassDistVisibility);
+  }
+  updateFinishingPassDistVisibility();
 
   // Spindle speed: spindle-speed-row tonen/verbergen
   const spindleSpeedEnabledCheckbox = /** @type {HTMLInputElement} */ (document.getElementById("spindle-speed-enabled"));
