@@ -40,6 +40,7 @@ This project was created out of my own need for a practical toolbox, and I want 
 * Fixed minor bugs
 * Preview smoothing (15fps interval calculation)
 * Added Circulair hole patern
+* Added change indicator
 
 ## V3.1
 * Fixed minor bugs
