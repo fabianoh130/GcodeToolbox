@@ -226,6 +226,11 @@ const TRANSLATIONS = {
     "gcode.comment.spindleOn": "spindle on",
     "gcode.comment.spindleOff": "spindle off",
 
+    // First visit popup
+    "firstVisit.title": "First time here?",
+    "firstVisit.body": "You can change the language, unit (mm/inch), theme and switch to Advanced mode any time from the Settings menu (gear icon in the top-right).",
+    "firstVisit.ok": "Got it",
+
     // Validation & errors ({{label}} = placeholder for field name)
     "error.positive": "{{label}} must be a positive number.",
     "error.leadInNegative": "Lead-in above material cannot be negative.",
@@ -506,6 +511,11 @@ const TRANSLATIONS = {
     "gcode.comment.spindleOn": "frees aan",
     "gcode.comment.spindleOff": "frees uit",
 
+    // First visit popup
+    "firstVisit.title": "Voor het eerst hier?",
+    "firstVisit.body": "Je kunt taal, eenheid (mm/inch), thema en modus op elk moment aanpassen via het instellingenmenu (tandwiel-icoon rechtsboven).",
+    "firstVisit.ok": "Begrepen",
+
     "error.positive": "{{label}} moet een positief getal zijn.",
     "error.leadInNegative": "Lead-in boven materiaal mag niet negatief zijn.",
     "error.stepdownTooBig": "Stepdown mag niet groter zijn dan de totale diepte.",
@@ -784,6 +794,11 @@ const TRANSLATIONS = {
     "gcode.comment.absolute": "absolute Positionierung",
     "gcode.comment.spindleOn": "Spindel an",
     "gcode.comment.spindleOff": "Spindel aus",
+
+    // First visit popup
+    "firstVisit.title": "Zum ersten Mal hier?",
+    "firstVisit.body": "Sie können Sprache, Einheit (mm/Zoll), Design und Modus jederzeit im Einstellungsmenü (Zahnrad-Symbol oben rechts) ändern.",
+    "firstVisit.ok": "Verstanden",
 
     "error.positive": "{{label}} muss eine positive Zahl sein.",
     "error.leadInNegative": "Anfahrweg über Material darf nicht negativ sein.",
@@ -1064,6 +1079,11 @@ const TRANSLATIONS = {
     "gcode.comment.spindleOn": "broche en marche",
     "gcode.comment.spindleOff": "broche arrêtée",
 
+    // First visit popup
+    "firstVisit.title": "Première visite ici ?",
+    "firstVisit.body": "Vous pouvez modifier la langue, l'unité (mm/pouce), le thème et le mode à tout moment depuis le menu Paramètres (icône d'engrenage en haut à droite).",
+    "firstVisit.ok": "Compris",
+
     "error.positive": "{{label}} doit être un nombre positif.",
     "error.leadInNegative": "L'approche au-dessus du matériau ne peut pas être négative.",
     "error.stepdownTooBig": "La passe par couche ne peut pas dépasser la profondeur totale.",
@@ -1342,6 +1362,11 @@ const TRANSLATIONS = {
     "gcode.comment.absolute": "posicionamiento absoluto",
     "gcode.comment.spindleOn": "husillo encendido",
     "gcode.comment.spindleOff": "husillo apagado",
+
+    // First visit popup
+    "firstVisit.title": "¿Primera vez aquí?",
+    "firstVisit.body": "Puedes cambiar el idioma, la unidad (mm/pulgadas), el tema y el modo en cualquier momento desde el menú de Ajustes (icono de engranaje arriba a la derecha).",
+    "firstVisit.ok": "Entendido",
 
     "error.positive": "{{label}} debe ser un número positivo.",
     "error.leadInNegative": "La aproximación sobre el material no puede ser negativa.",

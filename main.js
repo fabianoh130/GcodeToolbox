@@ -111,17 +111,19 @@ let lastToolpath = { moves: [] };
  * Nieuwe talen: voeg een key toe in TRANSLATIONS (translations.js) en een knop in de lang-switcher.
  */
 const LANG_STORAGE_KEY = "gcode-lang";
-const DEFAULT_LANG = "nl";
+const DEFAULT_LANG = "en";
 let currentLang = DEFAULT_LANG;
 
 const THEME_STORAGE_KEY = "gcode-theme";
-const DEFAULT_THEME = "dark";
+const DEFAULT_THEME = "light";
 
 const UNIT_STORAGE_KEY = "gcode-unit";
 const DEFAULT_UNIT = "mm";
 
 const MODE_STORAGE_KEY = "gcode-mode";
 const DEFAULT_MODE = "simple";
+
+const FIRST_VISIT_STORAGE_KEY = "gcode-first-visit-shown";
 function getDisplayMode() {
   try {
     const stored = localStorage.getItem(MODE_STORAGE_KEY);
@@ -5841,6 +5843,34 @@ function setupUI() {
       if (theme === "light" || theme === "dark") applyTheme(theme);
     });
   });
+
+  // First time visit popup
+  (function setupFirstVisitPopup() {
+    const overlay = document.getElementById("first-visit-overlay");
+    const dismissBtn = document.getElementById("first-visit-dismiss");
+    if (!overlay || !dismissBtn) return;
+
+    let hasShown = false;
+    try {
+      hasShown = localStorage.getItem(FIRST_VISIT_STORAGE_KEY) === "1";
+    } catch (_) {}
+    if (hasShown) return;
+
+    function closePopup() {
+      overlay.classList.add("hidden");
+      try {
+        localStorage.setItem(FIRST_VISIT_STORAGE_KEY, "1");
+      } catch (_) {}
+    }
+
+    overlay.classList.remove("hidden");
+    dismissBtn.addEventListener("click", closePopup);
+    overlay.addEventListener("click", (evt) => {
+      if (evt.target === overlay) {
+        closePopup();
+      }
+    });
+  })();
 
   // Unit switcher (mm / inch): bewaar keuze, converteer velden bij wissel, update labels
   const LENGTH_INPUT_IDS = [

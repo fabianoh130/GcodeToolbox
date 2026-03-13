@@ -1335,6 +1335,61 @@ body[data-display-mode="simple"] #gcode-form [data-mode="advanced"] {
   text-align: center;
 }
 
+.first-visit-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.first-visit-modal {
+  max-width: 420px;
+  width: calc(100% - 32px);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-soft);
+  border: 1px solid var(--border-subtle);
+  padding: 20px 20px 16px;
+}
+
+.first-visit-modal h2 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
+.first-visit-modal p {
+  margin: 0 0 16px;
+  font-size: 0.9rem;
+  color: var(--text-soft);
+}
+
+.first-visit-dismiss-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: none;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: #0b1120;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.03em;
+  transition: filter var(--transition-fast), transform var(--transition-fast);
+}
+
+.first-visit-dismiss-btn:hover {
+  filter: brightness(1.05);
+}
+
+.first-visit-dismiss-btn:active {
+  transform: translateY(1px);
+}
+
 @media (max-width: 960px) {
   .app-main {
     grid-template-columns: minmax(0, 1fr);

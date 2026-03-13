@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="nl">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <title data-i18n="page.title">Gcode toolbox</title>
@@ -12,7 +12,7 @@
     <header class="app-header">
       <div class="app-header-inner">
         <div>
-          <h1><span data-i18n="header.title">Gcode toolbox</span> <a href="https://github.com/fabianoh130/GcodeToolbox" target="_blank" rel="noopener noreferrer" class="app-version" data-i18n-title="header.checkForUpdates" title="Check for updates">v3.3</a></h1>
+          <h1><span data-i18n="header.title">Gcode toolbox</span> <a href="https://github.com/fabianoh130/GcodeToolbox" target="_blank" rel="noopener noreferrer" class="app-version" data-i18n-title="header.checkForUpdates" title="Check for updates">v3.4</a></h1>
         </div>
         <div class="settings-menu-wrapper">
           <button
@@ -794,6 +794,24 @@
     </main>
 
     <footer class="app-footer"></footer>
+  </div>
+
+  <div
+    id="first-visit-overlay"
+    class="first-visit-overlay hidden"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="first-visit-title"
+  >
+    <div class="first-visit-modal">
+      <h2 id="first-visit-title" data-i18n="firstVisit.title">First time here?</h2>
+      <p data-i18n="firstVisit.body">
+        You can change the language, unit (mm/inch), theme and mode any time from the Settings menu (gear icon in the top-right).
+      </p>
+      <button type="button" id="first-visit-dismiss" class="first-visit-dismiss-btn" data-i18n="firstVisit.ok">
+        Got it
+      </button>
+    </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
