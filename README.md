@@ -22,6 +22,7 @@ Im still working on this project. If you encounter any bugs or have ideas for ne
 # Future plans
 Things im considering doing in the future versions:
 * G2/G3 arcs
+* Offset from origin
 
 
 # Support this project
