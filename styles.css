@@ -1366,6 +1366,22 @@ body[data-display-mode="simple"] #gcode-form [data-mode="advanced"] {
   color: var(--text-soft);
 }
 
+.machine-settings-modal {
+  max-width: 640px;
+}
+
+.machine-settings-modal .field-row > label,
+.machine-settings-modal .field-row > .field-label {
+  width: 14rem;
+  min-width: 14rem;
+}
+
+.machine-settings-actions {
+  margin-top: 14px;
+  display: flex;
+  justify-content: flex-end;
+}
+
 .first-visit-dismiss-btn {
   display: inline-flex;
   align-items: center;

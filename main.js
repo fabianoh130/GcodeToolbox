@@ -975,7 +975,9 @@ function readInputsFromForm() {
 
   let stepoverMm;
   if (isSimpleMode) {
-    stepoverMm = Number.isFinite(toolDiameter) && toolDiameter > 0 ? 0.5 * toolDiameter : 3;
+    // Simple mode: default stepover is 50%, but for facing we want a coarser default (90%)
+    const defaultRatio = shape === ShapeType.FACING ? 0.9 : 0.66;
+    stepoverMm = Number.isFinite(toolDiameter) && toolDiameter > 0 ? defaultRatio * toolDiameter : 3;
   } else {
     const stepoverUnit = /** @type {HTMLInputElement} */ (document.querySelector('input[name="stepover-unit"]:checked'))?.value ?? "percent";
     const stepoverEl = /** @type {HTMLInputElement | null} */ (g("stepover"));
@@ -986,7 +988,8 @@ function readInputsFromForm() {
         ? toMm(stepoverValue, displayUnit)
         : NaN;
     if (!Number.isFinite(stepoverMm) || stepoverMm <= 0) {
-      stepoverMm = Number.isFinite(toolDiameter) && toolDiameter > 0 ? 0.5 * toolDiameter : 3;
+      const defaultRatio = shape === ShapeType.FACING ? 0.9 : 0.66;
+      stepoverMm = Number.isFinite(toolDiameter) && toolDiameter > 0 ? defaultRatio * toolDiameter : 3;
       if (stepoverEl) {
         if (stepoverUnit === "percent") {
           stepoverEl.value = "50";
@@ -1000,6 +1003,11 @@ function readInputsFromForm() {
 
   const spindleSpeedEnabled = isSimpleMode ? false : (/** @type {HTMLInputElement} */ (g("spindle-speed-enabled"))?.checked ?? false);
   const spindleSpeed = spindleSpeedEnabled ? toNumber(g("spindle-speed")?.value) : null;
+  const mistCoolantEnabled = isSimpleMode ? false : (/** @type {HTMLInputElement} */ (g("mist-coolant-enabled"))?.checked ?? false);
+  const floodCoolantEnabled = isSimpleMode ? false : (/** @type {HTMLInputElement} */ (g("flood-coolant-enabled"))?.checked ?? false);
+  const mirrorXEnabled = isSimpleMode ? false : (/** @type {HTMLInputElement} */ (g("mirror-x-enabled"))?.checked ?? false);
+  const mirrorYEnabled = isSimpleMode ? false : (/** @type {HTMLInputElement} */ (g("mirror-y-enabled"))?.checked ?? false);
+  const useArcsEnabled = /** @type {HTMLInputElement} */ (g("use-arcs-enabled"))?.checked ?? false;
 
   const finishingPassEnabled = isSimpleMode ? false : (/** @type {HTMLInputElement} */ (g("finishing-pass-enabled"))?.checked ?? false);
   const finishingPassDistance = finishingPassEnabled
@@ -1016,6 +1024,11 @@ function readInputsFromForm() {
     leadInAboveMm: isSimpleMode ? 2 : toMm(toNumber(g("lead-in-above").value), displayUnit),
     spindleSpeedEnabled,
     spindleSpeed: Number.isFinite(spindleSpeed) && spindleSpeed > 0 ? spindleSpeed : null,
+    mistCoolantEnabled,
+    floodCoolantEnabled,
+    mirrorXEnabled,
+    mirrorYEnabled,
+    useArcsEnabled,
     finishingPassEnabled,
     finishingPassDistance: Number.isFinite(finishingPassDistance) && finishingPassDistance >= 0 ? finishingPassDistance : 0,
   };
@@ -1034,6 +1047,9 @@ function readInputsFromForm() {
 
   const facingModeRaw = (/** @type {HTMLSelectElement} */ (g("facing-mode")))?.value?.trim?.() ?? "";
   const facingMode = facingModeRaw === "within" ? "within" : "full";
+  const facingDirectionRaw = isSimpleMode ? "x" : ((/** @type {HTMLSelectElement} */ (g("facing-direction")))?.value?.trim?.() ?? "");
+  const facingDirection = facingDirectionRaw === "y" ? "y" : "x";
+  const facingEvenSpacing = isSimpleMode ? false : ((/** @type {HTMLInputElement} */ (g("facing-even-spacing")))?.checked ?? false);
 
   const contourType = /** @type {HTMLSelectElement} */ (
     g("contour-type")
@@ -1073,6 +1089,8 @@ function readInputsFromForm() {
     letterMode,
     contourType: contourType === "inside" ? "inside" : "outside",
     facingMode,
+    facingDirection,
+    facingEvenSpacing,
     cutParams: {
       ...cutParams,
       entryMethod: entryMethod || EntryMethod.PLUNGE,
@@ -1125,12 +1143,18 @@ function getParamsSnapshotReadOnly() {
   if (shape === ShapeType.COUNTERBORE_BOLT && !multDep) stepdown = totalD;
 
   let stepoverMm;
-  if (isSimple) stepoverMm = (Number.isFinite(toolD) && toolD > 0 ? 0.5 * toolD : 3);
+  if (isSimple) {
+    const defaultRatio = shape === ShapeType.FACING ? 0.9 : 0.66;
+    stepoverMm = (Number.isFinite(toolD) && toolD > 0 ? defaultRatio * toolD : 3);
+  }
   else {
     const unit = document.querySelector('input[name="stepover-unit"]:checked')?.value ?? "percent";
     const sv = v("stepover");
     stepoverMm = unit === "percent" && Number.isFinite(toolD) && Number.isFinite(sv) ? (sv / 100) * toolD : unit === "mm" ? vm("stepover") : NaN;
-    if (!Number.isFinite(stepoverMm) || stepoverMm <= 0) stepoverMm = Number.isFinite(toolD) && toolD > 0 ? 0.5 * toolD : 3;
+    if (!Number.isFinite(stepoverMm) || stepoverMm <= 0) {
+      const defaultRatio = shape === ShapeType.FACING ? 0.9 : 0.66;
+      stepoverMm = Number.isFinite(toolD) && toolD > 0 ? defaultRatio * toolD : 3;
+    }
     stepoverMm = Math.min(stepoverMm, Number.isFinite(toolD) ? toolD : stepoverMm);
   }
 
@@ -1147,6 +1171,11 @@ function getParamsSnapshotReadOnly() {
     leadInAboveMm: isSimple ? 2 : vm("lead-in-above"),
     spindleSpeedEnabled: isSimple ? false : (el("spindle-speed-enabled")?.checked ?? false),
     spindleSpeed: null,
+    mistCoolantEnabled: isSimple ? false : (el("mist-coolant-enabled")?.checked ?? false),
+    floodCoolantEnabled: isSimple ? false : (el("flood-coolant-enabled")?.checked ?? false),
+    mirrorXEnabled: isSimple ? false : (el("mirror-x-enabled")?.checked ?? false),
+    mirrorYEnabled: isSimple ? false : (el("mirror-y-enabled")?.checked ?? false),
+    useArcsEnabled: el("use-arcs-enabled")?.checked ?? false,
     finishingPassEnabled: finPassEnabled,
     finishingPassDistance: Number.isFinite(finPassDist) && finPassDist >= 0 ? finPassDist : 0,
   };
@@ -1161,13 +1190,15 @@ function getParamsSnapshotReadOnly() {
   const plungeRaw = el("plunge-outside")?.value ?? "off";
   const plunge = isSimple ? false : ((operation === OperationType.POCKET || operation === OperationType.FACING || shape === ShapeType.DXF) ? false : plungeRaw === "on");
   const facing = (el("facing-mode")?.value?.trim?.() ?? "") === "within" ? "within" : "full";
+  const facingDir = isSimple ? "x" : ((el("facing-direction")?.value?.trim?.() ?? "") === "y" ? "y" : "x");
+  const facingEven = isSimple ? false : (el("facing-even-spacing")?.checked ?? false);
   const contour = el("contour-type")?.value === "inside" ? "inside" : "outside";
   const tabsEn = el("tabs-enabled")?.checked ?? false;
   const tabs = { enabled: tabsEn, interval: vm("tab-interval"), width: vm("tab-width"), height: vm("tab-height") };
   const entry = isSimple ? EntryMethod.PLUNGE : (el("entry-method")?.value || EntryMethod.PLUNGE);
   const ramp = v("ramp-angle") || 3;
 
-  const snap = { shape, operation, shapeParams: sp, letterMode, contourType: contour, facingMode: facing, plungeOutside: plunge, cutParams: { ...cp, entryMethod: entry, rampAngleMax: ramp }, originParams: op, tabs };
+  const snap = { shape, operation, shapeParams: sp, letterMode, contourType: contour, facingMode: facing, facingDirection: facingDir, facingEvenSpacing: facingEven, plungeOutside: plunge, cutParams: { ...cp, entryMethod: entry, rampAngleMax: ramp }, originParams: op, tabs };
   if (shape === ShapeType.DXF) {
     const f = el("dxf-file");
     const file = f?.files?.[0];
@@ -1179,7 +1210,7 @@ function getParamsSnapshotReadOnly() {
 const NUM_TOL = 1e-6;
 function paramsSnapshotsEqual(a, b) {
   if (!a || !b) return a === b;
-  if (a.shape !== b.shape || a.operation !== b.operation || a.letterMode !== b.letterMode || a.contourType !== b.contourType || a.facingMode !== b.facingMode || a.plungeOutside !== b.plungeOutside) return false;
+  if (a.shape !== b.shape || a.operation !== b.operation || a.letterMode !== b.letterMode || a.contourType !== b.contourType || a.facingMode !== b.facingMode || a.facingDirection !== b.facingDirection || a.facingEvenSpacing !== b.facingEvenSpacing || a.plungeOutside !== b.plungeOutside) return false;
   function eq(x, y) {
     if (typeof x === "number" && typeof y === "number") return Math.abs(x - y) < NUM_TOL;
     return x === y;
@@ -2190,6 +2221,29 @@ function roundedRectXBoundsAtY(hw, hh, r, y) {
 }
 
 /**
+ * Y-grenzen voor een verticale lijn op x binnen een afgeronde rechthoek (hw, hh, r).
+ * @param {number} hw
+ * @param {number} hh
+ * @param {number} r
+ * @param {number} x
+ * @returns {{yMin:number,yMax:number}}
+ */
+function roundedRectYBoundsAtX(hw, hh, r, x) {
+  if (r <= 0) return { yMin: -hh, yMax: hh };
+  if (x >= hw - r && x <= hw) {
+    const dx = x - (hw - r);
+    const dy = Math.sqrt(Math.max(0, r * r - dx * dx));
+    return { yMin: -hh + r - dy, yMax: hh - r + dy };
+  }
+  if (x >= -hw && x <= -hw + r) {
+    const dx = x - (-hw + r);
+    const dy = Math.sqrt(Math.max(0, r * r - dx * dx));
+    return { yMin: -hh + r - dy, yMax: hh - r + dy };
+  }
+  return { yMin: -hh, yMax: hh };
+}
+
+/**
  * Facing-paden: parallelle strips (rechthoekig gebied vlakfrezen).
  * Ondersteunt afgeronde hoeken via shapeParams.cornerRadius.
  * @param {string} shape - ShapeType.SQUARE of RECTANGLE
@@ -2197,37 +2251,92 @@ function roundedRectXBoundsAtY(hw, hh, r, y) {
  * @param {number} stepover
  * @param {number} toolRadius
  * @param {string} facingMode - "within" (tool binnen gebied) of "full" (helemaal bereiken)
+ * @param {string} [facingDirection] - "x" (strips langs X, stepover in Y) of "y" (strips langs Y, stepover in X)
+ * @param {boolean} [facingEvenSpacing] - true: restafstand gelijkmatig verdelen tussen passes
  * @returns {{x:number,y:number,z:number}[][]}
  */
-function generateFacingPaths(shape, shapeParams, stepover, toolRadius, facingMode) {
+function generateFacingPaths(shape, shapeParams, stepover, toolRadius, facingMode, facingDirection, facingEvenSpacing) {
   const hw = (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.width) / 2;
   const hh = (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.height) / 2;
   const userR = Number.isFinite(shapeParams.cornerRadius) ? shapeParams.cornerRadius : 0;
   const r = Math.min(userR, hw, hh);
   const isWithin = String(facingMode).toLowerCase().trim() === "within";
+  const dir = String(facingDirection || "x").toLowerCase().trim() === "y" ? "y" : "x";
+  const evenSpacing = !!facingEvenSpacing;
   const hwEff = isWithin ? hw - toolRadius : hw;
   const hhEff = isWithin ? hh - toolRadius : hh;
   const rEff = Math.max(0, isWithin ? r - toolRadius : r);
   if (hwEff <= 0 || hhEff <= 0) return [];
 
+  /**
+   * Genereert sweep-posities van -limit tot +limit en forceert altijd een eindpass op +limit.
+   * Zo blijft er geen reststrook over als stepover niet exact in de breedte/hoogte past.
+   * @param {number} limit
+   * @param {number} step
+   * @returns {number[]}
+   */
+  function buildSweepPositions(limit, step, distributeEvenly) {
+    const positions = [];
+    const eps = 1e-9;
+    if (!(Number.isFinite(limit) && limit > 0)) return [0];
+    if (!(Number.isFinite(step) && step > 0)) return [-limit, limit];
+    if (distributeEvenly) {
+      const span = 2 * limit;
+      const intervals = Math.max(1, Math.ceil(span / step));
+      const actualStep = span / intervals;
+      for (let i = 0; i <= intervals; i++) {
+        positions.push(-limit + i * actualStep);
+      }
+      return positions;
+    }
+    let pos = -limit;
+    while (pos <= limit + eps) {
+      positions.push(pos);
+      pos += step;
+    }
+    if (positions.length === 0) return [-limit, limit];
+    const last = positions[positions.length - 1];
+    if (Math.abs(last - limit) > eps) {
+      positions.push(limit);
+    }
+    return positions;
+  }
+
   /** @type {{x:number,y:number,z:number}[][]} */
   const paths = [];
-  let y = -hhEff;
   let reverse = false;
-  while (y <= hhEff + 1e-9) {
-    const { xMin, xMax } = roundedRectXBoundsAtY(hwEff, hhEff, rEff, y);
-    const strip = reverse
-      ? [
-          { x: xMax, y, z: 0 },
-          { x: xMin, y, z: 0 },
-        ]
-      : [
-          { x: xMin, y, z: 0 },
-          { x: xMax, y, z: 0 },
-        ];
-    paths.push(strip);
-    reverse = !reverse;
-    y += stepover;
+  if (dir === "y") {
+    const xPositions = buildSweepPositions(hwEff, stepover, evenSpacing);
+    for (const x of xPositions) {
+      const { yMin, yMax } = roundedRectYBoundsAtX(hwEff, hhEff, rEff, x);
+      const strip = reverse
+        ? [
+            { x, y: yMax, z: 0 },
+            { x, y: yMin, z: 0 },
+          ]
+        : [
+            { x, y: yMin, z: 0 },
+            { x, y: yMax, z: 0 },
+          ];
+      paths.push(strip);
+      reverse = !reverse;
+    }
+  } else {
+    const yPositions = buildSweepPositions(hhEff, stepover, evenSpacing);
+    for (const y of yPositions) {
+      const { xMin, xMax } = roundedRectXBoundsAtY(hwEff, hhEff, rEff, y);
+      const strip = reverse
+        ? [
+            { x: xMax, y, z: 0 },
+            { x: xMin, y, z: 0 },
+          ]
+        : [
+            { x: xMin, y, z: 0 },
+            { x: xMax, y, z: 0 },
+          ];
+      paths.push(strip);
+      reverse = !reverse;
+    }
   }
   return paths;
 }
@@ -2650,7 +2759,7 @@ function getResultShapePathsRaw(params) {
  * @returns {Toolpath}
  */
 function generateToolpath(params) {
-  const { shape, operation, shapeParams, cutParams, originParams, plungeOutside, contourType, tabs, facingMode } =
+  const { shape, operation, shapeParams, cutParams, originParams, plungeOutside, contourType, tabs, facingMode, facingDirection } =
     params;
   const toolRadius = cutParams.toolDiameter / 2;
   const minSizeForShape = getShapeMinSize(shape, shapeParams);
@@ -3235,6 +3344,8 @@ function generateToolpath(params) {
   let facingPaths = [];
   if (shape === ShapeType.FACING || (operation === OperationType.FACING && (shape === ShapeType.SQUARE || shape === ShapeType.RECTANGLE))) {
     const mode = (params.facingMode && String(params.facingMode).toLowerCase().trim() === "within") ? "within" : "full";
+    const dir = (params.facingDirection && String(params.facingDirection).toLowerCase().trim() === "y") ? "y" : "x";
+    const even = !!params.facingEvenSpacing;
     const useShape = shape === ShapeType.FACING ? ShapeType.RECTANGLE : shape;
     const useParams = shapeParams;
     facingPaths = generateFacingPaths(
@@ -3242,7 +3353,9 @@ function generateToolpath(params) {
       useParams,
       cutParams.stepover,
       toolRadius,
-      mode
+      mode,
+      dir,
+      even
     );
   }
 
@@ -4615,8 +4728,80 @@ function pointToCircleDeviation(px, py, cx, cy, r) {
   return Math.abs(Math.hypot(px - cx, py - cy) - r);
 }
 
+/**
+ * Probeer een gesloten (bijna) cirkel-run om te zetten naar 2 halve bogen.
+ * Geeft null terug als de run niet voldoende cirkelvormig is.
+ * @param {{ x: number, y: number, z: number }[]} points
+ * @returns {{ type: 'arc', x: number, y: number, z: number, i: number, j: number, clockwise: boolean }[] | null}
+ */
+function tryFitClosedCircleAsTwoArcs(points) {
+  if (!points || points.length < 8) return null;
+  const z = points[0].z;
+  const pts = points.slice();
+  const first = pts[0];
+  const last = pts[pts.length - 1];
+  const closeDist = Math.hypot(last.x - first.x, last.y - first.y);
+  if (closeDist < 1e-6) pts.pop();
+  if (pts.length < 7) return null;
+
+  const n = pts.length;
+  const p0 = pts[0];
+  const p1 = pts[Math.floor(n / 3)];
+  const p2 = pts[Math.floor((2 * n) / 3)];
+  const c = circleFromThreePoints(p0, p1, p2);
+  if (!c || !Number.isFinite(c.r) || c.r <= 0) return null;
+
+  const CIRCLE_TOL_MM = Math.max(0.25, c.r * 0.01);
+  for (let i = 0; i < n; i++) {
+    if (pointToCircleDeviation(pts[i].x, pts[i].y, c.cx, c.cy, c.r) > CIRCLE_TOL_MM) return null;
+  }
+
+  // Kies punt ongeveer tegenover startpunt.
+  let midIdx = Math.floor(n / 2);
+  let bestErr = Number.POSITIVE_INFINITY;
+  for (let i = 1; i < n - 1; i++) {
+    const dot = (pts[i].x - c.cx) * (p0.x - c.cx) + (pts[i].y - c.cy) * (p0.y - c.cy);
+    const err = Math.abs(dot + c.r * c.r);
+    if (err < bestErr) {
+      bestErr = err;
+      midIdx = i;
+    }
+  }
+  const pmid = pts[midIdx];
+  if (!pmid) return null;
+  if (Math.hypot(pmid.x - p0.x, pmid.y - p0.y) < 1e-4) return null;
+
+  // Draairichting op basis van lokale tangent.
+  const d1 = pts[1];
+  const d2 = pts[2];
+  if (!d1 || !d2) return null;
+  const crossPath = (d1.x - p0.x) * (d2.y - d1.y) - (d1.y - p0.y) * (d2.x - d1.x);
+  const clockwise = crossPath < 0;
+
+  return [
+    {
+      type: "arc",
+      x: pmid.x,
+      y: pmid.y,
+      z,
+      i: c.cx - p0.x,
+      j: c.cy - p0.y,
+      clockwise,
+    },
+    {
+      type: "arc",
+      x: p0.x,
+      y: p0.y,
+      z,
+      i: c.cx - pmid.x,
+      j: c.cy - pmid.y,
+      clockwise,
+    },
+  ];
+}
+
 /** Max afwijking (mm) om een reeks punten als cirkelboog te accepteren; wat ruimer voor Bézier-benaderingen */
-const ARC_FIT_TOLERANCE_MM = 0.03;
+const ARC_FIT_TOLERANCE_MM = 0.2;
 
 /**
  * Vervang reeksen cut-bewegingen in de move-lijst door arc-bewegingen waar mogelijk.
@@ -4625,25 +4810,15 @@ const ARC_FIT_TOLERANCE_MM = 0.03;
  */
 function replaceCutRunsWithArcs(moves) {
   const out = [];
-  let i = 0;
-  while (i < moves.length) {
-    const m = moves[i];
-    if (m.type === "rapid") {
-      out.push(m);
-      i++;
-      continue;
-    }
-    if (m.type !== "cut") {
-      out.push(m);
-      i++;
-      continue;
-    }
-    const cutRun = [];
-    while (i < moves.length && moves[i].type === "cut") {
-      cutRun.push({ x: moves[i].x, y: moves[i].y, z: moves[i].z });
-      i++;
-    }
-    const fitted = fitArcsToPoints(cutRun);
+  const Z_TOL = 1e-4;
+  /** @type {{ x: number, y: number, z: number }[]} */
+  let cutRun = [];
+  let runZ = null;
+
+  function flushCutRun() {
+    if (!cutRun.length) return;
+    const circleArcs = tryFitClosedCircleAsTwoArcs(cutRun);
+    const fitted = circleArcs ?? fitArcsToPoints(cutRun);
     for (const seg of fitted) {
       if (seg.type === "arc") {
         out.push({
@@ -4659,7 +4834,31 @@ function replaceCutRunsWithArcs(moves) {
         out.push({ x: seg.x, y: seg.y, z: seg.z, type: "cut" });
       }
     }
+    cutRun = [];
+    runZ = null;
   }
+
+  for (const m of moves) {
+    if (m.type !== "cut") {
+      flushCutRun();
+      out.push(m);
+      continue;
+    }
+    if (!Number.isFinite(m.x) || !Number.isFinite(m.y) || !Number.isFinite(m.z)) {
+      flushCutRun();
+      out.push(m);
+      continue;
+    }
+    if (runZ == null || Math.abs(m.z - runZ) <= Z_TOL) {
+      cutRun.push({ x: m.x, y: m.y, z: m.z });
+      if (runZ == null) runZ = m.z;
+      continue;
+    }
+    flushCutRun();
+    cutRun.push({ x: m.x, y: m.y, z: m.z });
+    runZ = m.z;
+  }
+  flushCutRun();
   moves.length = 0;
   moves.push(...out);
 }
@@ -4673,9 +4872,19 @@ function fitArcsToPoints(points) {
   if (points.length < 3) {
     return points.map((p) => ({ type: "line", ...p }));
   }
+  const ARC_MIN_CHORD_MM = 1e-6;
+  const ARC_MAX_SWEEP_RAD = Math.PI * 1.02; // vermijd (bijna) volledige cirkel in 1 boog
   const result = [];
   let i = 0;
   const z = points[0].z;
+
+  function normalizedCcwSweep(aStart, aEnd) {
+    let d = aEnd - aStart;
+    while (d < 0) d += Math.PI * 2;
+    while (d >= Math.PI * 2) d -= Math.PI * 2;
+    return d;
+  }
+
   while (i < points.length) {
     if (i >= points.length - 2) {
       result.push({ type: "line", ...points[i] });
@@ -4687,8 +4896,21 @@ function fitArcsToPoints(points) {
     for (let j = i + 3; j <= points.length; j++) {
       const pMid = points[Math.floor((i + j) / 2)];
       const pEnd = points[j - 1];
+      // Vermijd full-circle/degenereerde bogen met praktisch gelijke start/eindpunt.
+      if (Math.hypot(pEnd.x - p0.x, pEnd.y - p0.y) <= ARC_MIN_CHORD_MM) {
+        break;
+      }
       const circle = circleFromThreePoints(p0, pMid, pEnd);
       if (!circle) break;
+      const a0 = Math.atan2(p0.y - circle.cy, p0.x - circle.cx);
+      const a1 = Math.atan2(pMid.y - circle.cy, pMid.x - circle.cx);
+      const a2 = Math.atan2(pEnd.y - circle.cy, pEnd.x - circle.cx);
+      const crossDir = (p0.x - circle.cx) * (pEnd.y - circle.cy) - (p0.y - circle.cy) * (pEnd.x - circle.cx);
+      const isClockwise = crossDir < 0;
+      const ccwSweep = normalizedCcwSweep(a0, a2);
+      const sweep = isClockwise ? (Math.PI * 2 - ccwSweep) : ccwSweep;
+      // Grote sweeps (richting 360°) in 1 boog worden door veel controllers verkeerd geïnterpreteerd.
+      if (sweep > ARC_MAX_SWEEP_RAD) break;
       let ok = true;
       for (let k = i + 1; k < j - 1 && ok; k++) {
         if (pointToCircleDeviation(points[k].x, points[k].y, circle.cx, circle.cy, circle.r) > ARC_FIT_TOLERANCE_MM) {
@@ -4701,6 +4923,11 @@ function fitArcsToPoints(points) {
     if (bestJ > i + 2) {
       const pEnd = points[bestJ - 1];
       const pMid = points[Math.floor((i + bestJ) / 2)];
+      if (Math.hypot(pEnd.x - p0.x, pEnd.y - p0.y) <= ARC_MIN_CHORD_MM) {
+        result.push({ type: "line", ...p0 });
+        i++;
+        continue;
+      }
       const circle = circleFromThreePoints(p0, pMid, pEnd);
       if (circle) {
         const dx = p0.x - circle.cx;
@@ -4744,6 +4971,9 @@ function toolpathToGcode(toolpath, params) {
     ? (useInch ? cutParams.feedrate / MM_PER_INCH : cutParams.feedrate)
     : 0;
   const lines = [];
+  const mirrorX = !!cutParams.mirrorXEnabled;
+  const mirrorY = !!cutParams.mirrorYEnabled;
+  const mirrorFlipsArcDir = (mirrorX ? 1 : 0) + (mirrorY ? 1 : 0) === 1;
 
   lines.push(`(${t("gcode.comment.generated")})`);
   lines.push(useInch ? `G20  (${t("gcode.comment.unitsInch")})` : `G21  (${t("gcode.comment.unitsMm")})`);
@@ -4753,9 +4983,19 @@ function toolpathToGcode(toolpath, params) {
     ? `M3 S${Math.round(cutParams.spindleSpeed)}  (${t("gcode.comment.spindleOn")})`
     : `M3  (${t("gcode.comment.spindleOn")})`;
   lines.push(spindleCmd);
+  if (cutParams.mistCoolantEnabled) lines.push(`M7  (${t("gcode.comment.coolantMistOn")})`);
+  if (cutParams.floodCoolantEnabled) lines.push(`M8  (${t("gcode.comment.coolantFloodOn")})`);
 
   let currentFeed = 0;
-  const moves = toolpath.moves;
+  let currentX = null;
+  let currentY = null;
+  const ARC_RADIUS_TOL_MM = 1.0;
+  const ARC_MIN_CHORD_MM = 1e-6;
+  /** @type {ToolpathMove[]} */
+  const moves = toolpath.moves.map((m) => ({ ...m }));
+  if (cutParams.useArcsEnabled) {
+    replaceCutRunsWithArcs(moves);
+  }
   let idx = 0;
 
   function outCoord(v) {
@@ -4763,11 +5003,19 @@ function toolpathToGcode(toolpath, params) {
     const val = useInch ? fromMm(v, "inch") : v;
     return val.toFixed(decimals);
   }
+  function tx(x) {
+    if (!Number.isFinite(x)) return x;
+    return mirrorX ? -x : x;
+  }
+  function ty(y) {
+    if (!Number.isFinite(y)) return y;
+    return mirrorY ? -y : y;
+  }
 
   while (idx < moves.length) {
     const m = moves[idx];
-    const x = Number.isFinite(m.x) ? m.x : null;
-    const y = Number.isFinite(m.y) ? m.y : null;
+    const x = Number.isFinite(m.x) ? tx(m.x) : null;
+    const y = Number.isFinite(m.y) ? ty(m.y) : null;
     const z = Number.isFinite(m.z) ? m.z : null;
 
     if (m.type === "rapid") {
@@ -4775,30 +5023,41 @@ function toolpathToGcode(toolpath, params) {
       const ys = y != null ? `Y${outCoord(y)}` : "";
       const zs = z != null ? `Z${outCoord(z)}` : "";
       lines.push(`G0 ${xs} ${ys} ${zs}`.trim());
+      if (x != null) currentX = x;
+      if (y != null) currentY = y;
       idx++;
       continue;
     }
-
-    const cutRun = [];
-    while (idx < moves.length && moves[idx].type === "cut") {
-      const c = moves[idx];
-      cutRun.push({ x: c.x, y: c.y, z: c.z });
-      idx++;
-    }
-    for (const c of cutRun) {
-      const xs = `X${outCoord(c.x)}`;
-      const ys = `Y${outCoord(c.y)}`;
-      const zs = c.z != null ? ` Z${outCoord(c.z)}` : "";
-      let line = `G1 ${xs} ${ys}${zs}`.trim();
-      if (feedrate && feedrate !== currentFeed) {
-        line += ` F${(useInch ? feedrate : cutParams.feedrate).toFixed(useInch ? 2 : 0)}`;
-        currentFeed = feedrate;
+    const xs = x != null ? `X${outCoord(x)}` : "";
+    const ys = y != null ? `Y${outCoord(y)}` : "";
+    const zs = z != null ? ` Z${outCoord(z)}` : "";
+    let line = `G1 ${xs} ${ys}${zs}`.trim();
+    if (m.type === "arc" && Number.isFinite(m.i) && Number.isFinite(m.j) && currentX != null && currentY != null && x != null && y != null) {
+      const iVal = mirrorX ? -m.i : m.i;
+      const jVal = mirrorY ? -m.j : m.j;
+      const cx = currentX + iVal;
+      const cy = currentY + jVal;
+      const rStart = Math.hypot(currentX - cx, currentY - cy);
+      const rEnd = Math.hypot(x - cx, y - cy);
+      const chord = Math.hypot(x - currentX, y - currentY);
+      const arcValid = chord > ARC_MIN_CHORD_MM && Math.abs(rStart - rEnd) <= ARC_RADIUS_TOL_MM;
+      if (arcValid) {
+        const gCode = (m.clockwise ^ mirrorFlipsArcDir) ? "G2" : "G3";
+        line = `${gCode} ${xs} ${ys}${zs} I${outCoord(iVal)} J${outCoord(jVal)}`.trim();
       }
-      lines.push(line);
     }
+    if (feedrate && feedrate !== currentFeed) {
+      line += ` F${(useInch ? feedrate : cutParams.feedrate).toFixed(useInch ? 2 : 0)}`;
+      currentFeed = feedrate;
+    }
+    lines.push(line);
+    if (x != null) currentX = x;
+    if (y != null) currentY = y;
+    idx++;
   }
 
   lines.push(`G0 Z${safeZ.toFixed(decimals)}`);
+  if (cutParams.mistCoolantEnabled || cutParams.floodCoolantEnabled) lines.push(`M9  (${t("gcode.comment.coolantOff")})`);
   lines.push(`M5  (${t("gcode.comment.spindleOff")})`);
   lines.push("M30");
 
@@ -5028,6 +5287,30 @@ function renderPreview(toolpath, canvas, viewMode = currentPreviewView, cursorCo
     if (p.x > maxX) maxX = p.x;
     if (p.y > maxY) maxY = p.y;
   });
+
+  // Voor TOP-view: voeg de resultaatvorm toe aan de view-bounds, zonder minX0/maxX0
+  // (die worden gebruikt voor dimensies). Zo voorkom je clipping zonder maatfout.
+  if (viewMode === PreviewViewMode.TOP) {
+    const previewResultPathsWithDepth = toolpath.resultPathsWithDepth;
+    const previewResultPaths = toolpath.resultPaths;
+    const previewUsePathsWithDepth = previewResultPathsWithDepth && previewResultPathsWithDepth.length > 0;
+    const previewPathsToUse = previewUsePathsWithDepth
+      ? previewResultPathsWithDepth.map((p) => p.path)
+      : previewResultPaths;
+    if (previewPathsToUse && previewPathsToUse.length > 0) {
+      previewPathsToUse.forEach((path) => {
+        if (!path || path.length === 0) return;
+        path.forEach((pt) => {
+          if (!Number.isFinite(pt.x) || !Number.isFinite(pt.y)) return;
+          const p = projectPoint(pt.x - cx, pt.y - cy, (cz - 0) * DEPTH_SCALE);
+          if (p.x < minX) minX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y > maxY) maxY = p.y;
+        });
+      });
+    }
+  }
 
   // Zorg dat de origin (0,0,0) altijd binnen de view-bounds valt
   const originProjected = projectPoint(0 - cx, 0 - cy, (cz - 0) * DEPTH_SCALE);
@@ -5690,6 +5973,11 @@ const MACHINE_SETTINGS_SCHEMA = [
   { key: "feedrate", formId: "feedrate", type: "number" },
   { key: "spindleSpeedEnabled", formId: "spindle-speed-enabled", type: "checkbox" },
   { key: "spindleSpeed", formId: "spindle-speed", type: "number" },
+  { key: "mistCoolantEnabled", formId: "mist-coolant-enabled", type: "checkbox" },
+  { key: "floodCoolantEnabled", formId: "flood-coolant-enabled", type: "checkbox" },
+  { key: "mirrorXEnabled", formId: "mirror-x-enabled", type: "checkbox" },
+  { key: "mirrorYEnabled", formId: "mirror-y-enabled", type: "checkbox" },
+  { key: "useArcsEnabled", formId: "use-arcs-enabled", type: "checkbox" },
   { key: "toolDiameter", formId: "tool-diameter", type: "number" },
   { key: "safeHeight", formId: "safe-height", type: "number" },
   { key: "leadInAbove", formId: "lead-in-above", type: "number" },
@@ -5701,6 +5989,11 @@ const MACHINE_SETTINGS_DEFAULTS = {
   feedrate: 800,
   spindleSpeedEnabled: false,
   spindleSpeed: 12000,
+  mistCoolantEnabled: false,
+  floodCoolantEnabled: false,
+  mirrorXEnabled: false,
+  mirrorYEnabled: false,
+  useArcsEnabled: false,
   toolDiameter: 4,
   safeHeight: 10,
   leadInAbove: 2,
@@ -5719,14 +6012,19 @@ function saveLastSettings() {
       feedrate: toNumber(document.getElementById("feedrate")?.value),
       spindleSpeedEnabled: /** @type {HTMLInputElement} */ (document.getElementById("spindle-speed-enabled"))?.checked ?? false,
       spindleSpeed: toNumber(document.getElementById("spindle-speed")?.value),
+      mistCoolantEnabled: /** @type {HTMLInputElement} */ (document.getElementById("mist-coolant-enabled"))?.checked ?? false,
+      floodCoolantEnabled: /** @type {HTMLInputElement} */ (document.getElementById("flood-coolant-enabled"))?.checked ?? false,
+      mirrorXEnabled: /** @type {HTMLInputElement} */ (document.getElementById("mirror-x-enabled"))?.checked ?? false,
+      mirrorYEnabled: /** @type {HTMLInputElement} */ (document.getElementById("mirror-y-enabled"))?.checked ?? false,
+      useArcsEnabled: /** @type {HTMLInputElement} */ (document.getElementById("use-arcs-enabled"))?.checked ?? false,
       toolDiameter: toNumber(document.getElementById("tool-diameter")?.value),
       safeHeight: toNumber(document.getElementById("safe-height")?.value),
       leadInAbove: toNumber(document.getElementById("lead-in-above")?.value),
       zOffset: toNumber(document.getElementById("z-offset")?.value),
     };
-    MACHINE_SETTINGS_SCHEMA.forEach(({ key }) => {
+    MACHINE_SETTINGS_SCHEMA.forEach(({ key, type }) => {
       const val = data[key];
-      if (key !== "spindleSpeedEnabled" && (val == null || !Number.isFinite(val))) {
+      if (type === "number" && (val == null || !Number.isFinite(val))) {
         data[key] = MACHINE_SETTINGS_DEFAULTS[key];
       }
     });
@@ -6063,7 +6361,7 @@ function setupUI() {
       const spindleRow = document.getElementById("spindle-speed-row");
       const spindleCb = document.getElementById("spindle-speed-enabled");
       if (spindleRow && spindleCb) {
-        spindleRow.classList.toggle("hidden", !spindleCb.checked);
+        spindleRow.classList.toggle("hidden", !(/** @type {HTMLInputElement} */ (spindleCb)).checked);
       }
     } catch (_) {}
   }
@@ -6093,6 +6391,31 @@ function setupUI() {
     settingsDropdown.addEventListener("click", (e) => e.stopPropagation());
   }
 
+  const machineSettingsOverlay = document.getElementById("machine-settings-overlay");
+  const machineSettingsBtn = document.getElementById("settings-machine-btn");
+  const machineSettingsCloseBtn = document.getElementById("machine-settings-close");
+  function closeMachineSettingsModal() {
+    if (machineSettingsOverlay) machineSettingsOverlay.classList.add("hidden");
+  }
+  function openMachineSettingsModal() {
+    if (machineSettingsOverlay) machineSettingsOverlay.classList.remove("hidden");
+    closeSettingsMenu();
+  }
+  if (machineSettingsBtn) {
+    machineSettingsBtn.addEventListener("click", () => openMachineSettingsModal());
+  }
+  if (machineSettingsCloseBtn) {
+    machineSettingsCloseBtn.addEventListener("click", () => closeMachineSettingsModal());
+  }
+  if (machineSettingsOverlay) {
+    machineSettingsOverlay.addEventListener("click", (evt) => {
+      if (evt.target === machineSettingsOverlay) closeMachineSettingsModal();
+    });
+  }
+  document.addEventListener("keydown", (evt) => {
+    if (evt.key === "Escape") closeMachineSettingsModal();
+  });
+
   // Machine-instellingen export
   const exportBtn = document.getElementById("settings-export-machine");
   if (exportBtn) {
@@ -6110,14 +6433,19 @@ function setupUI() {
         feedrate: toNumber(document.getElementById("feedrate")?.value),
         spindleSpeedEnabled: /** @type {HTMLInputElement} */ (document.getElementById("spindle-speed-enabled"))?.checked ?? false,
         spindleSpeed: toNumber(document.getElementById("spindle-speed")?.value),
+        mistCoolantEnabled: /** @type {HTMLInputElement} */ (document.getElementById("mist-coolant-enabled"))?.checked ?? false,
+        floodCoolantEnabled: /** @type {HTMLInputElement} */ (document.getElementById("flood-coolant-enabled"))?.checked ?? false,
+        mirrorXEnabled: /** @type {HTMLInputElement} */ (document.getElementById("mirror-x-enabled"))?.checked ?? false,
+        mirrorYEnabled: /** @type {HTMLInputElement} */ (document.getElementById("mirror-y-enabled"))?.checked ?? false,
+        useArcsEnabled: /** @type {HTMLInputElement} */ (document.getElementById("use-arcs-enabled"))?.checked ?? false,
         toolDiameter: toNumber(document.getElementById("tool-diameter")?.value),
         safeHeight: toNumber(document.getElementById("safe-height")?.value),
         leadInAbove: toNumber(document.getElementById("lead-in-above")?.value),
         zOffset: toNumber(document.getElementById("z-offset")?.value),
       };
-      MACHINE_SETTINGS_SCHEMA.forEach(({ key }) => {
+      MACHINE_SETTINGS_SCHEMA.forEach(({ key, type }) => {
         const val = data[key];
-        if (key !== "spindleSpeedEnabled" && (val == null || !Number.isFinite(val))) {
+        if (type === "number" && (val == null || !Number.isFinite(val))) {
           data[key] = MACHINE_SETTINGS_DEFAULTS[key];
         }
       });
@@ -6176,7 +6504,7 @@ function setupUI() {
           const spindleRow = document.getElementById("spindle-speed-row");
           const spindleCb = document.getElementById("spindle-speed-enabled");
           if (spindleRow && spindleCb) {
-            spindleRow.classList.toggle("hidden", !spindleCb.checked);
+            spindleRow.classList.toggle("hidden", !(/** @type {HTMLInputElement} */ (spindleCb)).checked);
           }
           alert(t("settings.importSuccess"));
           closeSettingsMenu();
@@ -6291,6 +6619,8 @@ function setupUI() {
   function updateUIForOperationTypeAndShape() {
     const opType = operationTypeSelect?.value ?? OperationTypeCategory.SHAPES;
     const selected = getEffectiveShape();
+    const previous = updateUIForOperationTypeAndShape._prevShape;
+    updateUIForOperationTypeAndShape._prevShape = selected;
 
     // Toon/verberg vorm-dropdown (alleen bij "Vormen")
     document.querySelectorAll(".vormen-only").forEach((el) => {
@@ -6363,6 +6693,26 @@ function setupUI() {
       if (operationRow) operationRow.classList.add("hidden");
       contourOnlyElems.forEach((el) => el.classList.add("hidden"));
       facingOnlyElems.forEach((el) => el.classList.remove("hidden"));
+
+      // Facing defaults (only when switching into facing)
+      if (previous !== ShapeType.FACING) {
+        const u = getDisplayUnit();
+        const toolEl = /** @type {HTMLInputElement | null} */ (document.getElementById("tool-diameter"));
+        const totalDepthEl = /** @type {HTMLInputElement | null} */ (document.getElementById("total-depth"));
+        const stepoverEl = /** @type {HTMLInputElement | null} */ (document.getElementById("stepover"));
+        if (toolEl) toolEl.value = String(fromMm(25, u));
+        if (totalDepthEl) totalDepthEl.value = String(fromMm(1, u));
+        // default stepover = 90% for facing
+        const percentRadio = /** @type {HTMLInputElement | null} */ (document.querySelector('input[name="stepover-unit"][value="percent"]'));
+        if (percentRadio) {
+          percentRadio.checked = true;
+          // Trigger the unit toggle handler so min/max + wrapper step update correctly
+          percentRadio.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        if (stepoverEl) stepoverEl.value = "90";
+        if (typeof updateStepoverHint === "function") updateStepoverHint();
+        if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
+      }
     } else {
       if (operationRow) operationRow.classList.remove("hidden");
       facingOnlyElems.forEach((el) => el.classList.add("hidden"));
@@ -6392,6 +6742,9 @@ function setupUI() {
     updateCircularPatternHolesCenterRowVisibility();
     updateToolDiameterVisibility();
   }
+
+  // Track last effective shape inside closure (static-like property)
+  updateUIForOperationTypeAndShape._prevShape = null;
 
   function updateCircularPatternHolesCenterRowVisibility() {
     const centerRow = document.getElementById("circular-pattern-holes-center-diameter-row");
@@ -7290,6 +7643,13 @@ function setupUI() {
     el.addEventListener("input", updateRegenerateIndicator);
     el.addEventListener("change", updateRegenerateIndicator);
   });
+  ["spindle-speed-enabled", "spindle-speed", "mist-coolant-enabled", "flood-coolant-enabled", "mirror-x-enabled", "mirror-y-enabled", "use-arcs-enabled"]
+    .forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener("input", updateRegenerateIndicator);
+      el.addEventListener("change", updateRegenerateIndicator);
+    });
   const dxfFileEl = document.getElementById("dxf-file");
   if (dxfFileEl) dxfFileEl.addEventListener("change", updateRegenerateIndicator);
 

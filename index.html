@@ -12,7 +12,7 @@
     <header class="app-header">
       <div class="app-header-inner">
         <div>
-          <h1><span data-i18n="header.title">Gcode toolbox</span> <a href="https://github.com/fabianoh130/GcodeToolbox" target="_blank" rel="noopener noreferrer" class="app-version" data-i18n-title="header.checkForUpdates" title="Check for updates">v3.4</a></h1>
+          <h1><span data-i18n="header.title">Gcode toolbox</span> <a href="https://github.com/fabianoh130/GcodeToolbox" target="_blank" rel="noopener noreferrer" class="app-version" data-i18n-title="header.checkForUpdates" title="Check for updates">v3.5</a></h1>
         </div>
         <div class="settings-menu-wrapper">
           <button
@@ -81,6 +81,11 @@
                 <button type="button" class="settings-importexport-item" id="settings-import-machine" data-i18n="settings.importMachine">Import instellingen</button>
               </div>
               <input type="file" id="settings-import-file" accept=".json" class="hidden" />
+            </div>
+            <div class="settings-section settings-section--machine">
+              <button type="button" class="settings-submenu-trigger" id="settings-machine-btn">
+                <span class="settings-section-label" data-i18n="settings.machineSettings">Machine settings</span>
+              </button>
             </div>
           </div>
         </div>
@@ -442,6 +447,23 @@
                 <option value="full" data-i18n="form.facingFull">Helemaal bereiken (volledig vlak)</option>
               </select>
             </div>
+            <div id="facing-direction-row" class="field-row facing-only hidden" data-mode="advanced">
+              <label for="facing-direction" data-i18n="form.facingDirection">Facing richting</label>
+              <select id="facing-direction" name="facing-direction">
+                <option value="x" selected data-i18n="form.facingDirectionX">X (strips langs X, stepover in Y)</option>
+                <option value="y" data-i18n="form.facingDirectionY">Y (strips langs Y, stepover in X)</option>
+              </select>
+            </div>
+            <div id="facing-even-spacing-row" class="field-row field-row--inline facing-only hidden" data-mode="advanced">
+              <span class="field-label" data-i18n="form.facingEvenSpacing">Restafstand gelijkmatig verdelen</span>
+              <label class="toggle-btn-label">
+                <input type="checkbox" id="facing-even-spacing" class="toggle-btn-input" checked />
+                <span class="toggle-btn">
+                  <span class="toggle-btn-no" data-i18n="form.no">Nee</span>
+                  <span class="toggle-btn-yes" data-i18n="form.yes">Ja</span>
+                </span>
+              </label>
+            </div>
             <div id="contour-type-row" class="field-row contour-only hidden">
               <label for="contour-type" data-i18n="form.contourType">Contour type</label>
               <select id="contour-type" name="contour-type">
@@ -594,16 +616,6 @@
                   <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
                 </div>
               </div>
-            </div>
-            <div class="field-row field-row--inline" data-mode="advanced">
-              <span class="field-label" data-i18n="form.spindleSpeedControl">Spindelregeling</span>
-              <label class="toggle-btn-label">
-                <input type="checkbox" id="spindle-speed-enabled" class="toggle-btn-input" />
-                <span class="toggle-btn">
-                  <span class="toggle-btn-no" data-i18n="form.off">Uit</span>
-                  <span class="toggle-btn-yes" data-i18n="form.on">Aan</span>
-                </span>
-              </label>
             </div>
             <div id="spindle-speed-row" class="field-row hidden" data-mode="advanced">
               <label for="spindle-speed" data-i18n="form.spindleSpeed">Spindelsnelheid S (RPM)</label>
@@ -811,6 +823,65 @@
       <button type="button" id="first-visit-dismiss" class="first-visit-dismiss-btn" data-i18n="firstVisit.ok">
         Got it
       </button>
+    </div>
+  </div>
+
+  <div id="machine-settings-overlay" class="first-visit-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="machine-settings-title">
+    <div class="first-visit-modal machine-settings-modal">
+      <h2 id="machine-settings-title" data-i18n="settings.machineSettings">Machine settings</h2>
+      <div class="field-row field-row--inline">
+        <span class="field-label" data-i18n="form.spindleSpeedControl">Spindelregeling</span>
+        <label class="toggle-btn-label">
+          <input type="checkbox" id="spindle-speed-enabled" class="toggle-btn-input" />
+          <span class="toggle-btn">
+            <span class="toggle-btn-no" data-i18n="form.off">Uit</span>
+            <span class="toggle-btn-yes" data-i18n="form.on">Aan</span>
+          </span>
+        </label>
+      </div>
+      <div class="field-row field-row--inline">
+        <span class="field-label" data-i18n="machine.mistCoolant">Mist coolant (M7)</span>
+        <label class="toggle-btn-label">
+          <input type="checkbox" id="mist-coolant-enabled" class="toggle-btn-input" />
+          <span class="toggle-btn">
+            <span class="toggle-btn-no" data-i18n="form.off">Uit</span>
+            <span class="toggle-btn-yes" data-i18n="form.on">Aan</span>
+          </span>
+        </label>
+      </div>
+      <div class="field-row field-row--inline">
+        <span class="field-label" data-i18n="machine.floodCoolant">Flood coolant (M8)</span>
+        <label class="toggle-btn-label">
+          <input type="checkbox" id="flood-coolant-enabled" class="toggle-btn-input" />
+          <span class="toggle-btn">
+            <span class="toggle-btn-no" data-i18n="form.off">Uit</span>
+            <span class="toggle-btn-yes" data-i18n="form.on">Aan</span>
+          </span>
+        </label>
+      </div>
+      <div class="field-row field-row--inline">
+        <span class="field-label" data-i18n="machine.mirrorX">Mirror X-axis</span>
+        <label class="toggle-btn-label">
+          <input type="checkbox" id="mirror-x-enabled" class="toggle-btn-input" />
+          <span class="toggle-btn">
+            <span class="toggle-btn-no" data-i18n="form.off">Uit</span>
+            <span class="toggle-btn-yes" data-i18n="form.on">Aan</span>
+          </span>
+        </label>
+      </div>
+      <div class="field-row field-row--inline">
+        <span class="field-label" data-i18n="machine.mirrorY">Mirror Y-axis</span>
+        <label class="toggle-btn-label">
+          <input type="checkbox" id="mirror-y-enabled" class="toggle-btn-input" />
+          <span class="toggle-btn">
+            <span class="toggle-btn-no" data-i18n="form.off">Uit</span>
+            <span class="toggle-btn-yes" data-i18n="form.on">Aan</span>
+          </span>
+        </label>
+      </div>
+      <div class="machine-settings-actions">
+        <button type="button" id="machine-settings-close" class="first-visit-dismiss-btn" data-i18n="common.close">Close</button>
+      </div>
     </div>
   </div>
 
