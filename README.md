@@ -34,6 +34,14 @@ Always review the generated code before running it on your machine.
 This project was created out of my own need for a practical toolbox, and I want to make it available for others. I am not responsible for any damage, errors, or issues caused by using this app or the code it generates. Use it at your own risk.
 
 # Version
+
+## 3.6
+* Fixed a bug where the finnishing pass wasnt calculated corectly if the Endmill and hole are close in size
+* Added the possibility to give the finnishing pass another speed
+* Added the possibility to give a bit of overlap in the finnishing pass
+
+##
+
 ## 3.4
 * Default language is English now
 * Added first time instructions
