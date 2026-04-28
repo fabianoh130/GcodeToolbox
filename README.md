@@ -35,6 +35,9 @@ This project was created out of my own need for a practical toolbox, and I want 
 
 # Version
 
+## 3.7
+* Fixed an issue reported by a user where the copy gcode button did not work when ran in a Docker environment.
+
 ## 3.6
 * Fixed a bug where the finnishing pass wasnt calculated corectly if the Endmill and hole are close in size
 * Added the possibility to give the finnishing pass another speed
