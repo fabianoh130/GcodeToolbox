@@ -40,7 +40,15 @@ This project was created out of my own need for a practical toolbox, and I want 
 * Added the possibility to give the finnishing pass another speed
 * Added the possibility to give a bit of overlap in the finnishing pass
 
-##
+## 3.5
+* Default stepover changed from 50% tot 66%
+* Added option to choose Facing direction
+* Changed Default values for facing
+* Fixed a bug with facing where the tool wouldnt reach the full given internal size.
+* Added the option to evenly distribute the steppover distance in facing.
+* Added extra Machine setting options
+  * Coolant
+  * Inverse axis
 
 ## 3.4
 * Default language is English now
