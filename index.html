@@ -12,7 +12,7 @@
     <header class="app-header">
       <div class="app-header-inner">
         <div>
-          <h1><span data-i18n="header.title">Gcode toolbox</span> <a href="https://github.com/fabianoh130/GcodeToolbox" target="_blank" rel="noopener noreferrer" class="app-version" data-i18n-title="header.checkForUpdates" title="Check for updates">v3.5</a></h1>
+          <h1><span data-i18n="header.title">Gcode toolbox</span> <a href="https://github.com/fabianoh130/GcodeToolbox" target="_blank" rel="noopener noreferrer" class="app-version" data-i18n-title="header.checkForUpdates" title="Check for updates">v3.6</a></h1>
         </div>
         <div class="settings-menu-wrapper">
           <button
@@ -587,7 +587,7 @@
               </div>
               <span id="stepover-mm-hint" class="field-hint" aria-live="polite"></span>
             </div>
-            <div class="field-row field-row--inline pocket-only hidden" data-mode="advanced">
+            <div class="field-row field-row--inline finishing-pass-only hidden" data-mode="advanced">
               <span class="field-label" data-i18n="form.finishingPass">Nabewerkingslaag</span>
               <label class="toggle-btn-label">
                 <input type="checkbox" id="finishing-pass-enabled" class="toggle-btn-input" />
@@ -597,10 +597,28 @@
                 </span>
               </label>
             </div>
-            <div id="finishing-pass-distance-row" class="field-row pocket-only hidden" data-mode="advanced">
+            <div id="finishing-pass-distance-row" class="field-row finishing-pass-only hidden" data-mode="advanced">
               <label for="finishing-pass-distance" data-i18n="form.finishingPassDistance">Nabewerkingsafstand (mm)</label>
               <div class="input-with-stepper" data-step="0.1" data-min="0">
                 <input type="number" id="finishing-pass-distance" min="0" step="0.1" value="0.2" data-i18n-title="form.finishingPassDistanceTitle" />
+                <div class="stepper-buttons">
+                  <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
+                  <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
+                </div>
+              </div>
+            </div>
+            <div id="finishing-pass-speed-override-row" class="field-row finishing-pass-only hidden" data-mode="advanced">
+              <label for="finishing-pass-speed-override" data-i18n="form.finishingPassSpeedOverride">Finishing speed override</label>
+              <div class="finishing-speed-override-control">
+                <input type="range" id="finishing-pass-speed-override" min="5" max="200" step="1" value="100" />
+                <span id="finishing-pass-speed-override-value" class="finishing-speed-override-value">100%</span>
+                <span id="finishing-pass-speed-override-hint" class="field-hint"></span>
+              </div>
+            </div>
+            <div id="finishing-pass-overlap-row" class="field-row finishing-pass-only hidden" data-mode="advanced">
+              <label for="finishing-pass-overlap" data-i18n="form.finishingPassOverlap">Finishing overlap (mm)</label>
+              <div class="input-with-stepper" data-step="0.1" data-min="0">
+                <input type="number" id="finishing-pass-overlap" min="0" step="0.1" value="2" />
                 <div class="stepper-buttons">
                   <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
                   <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>

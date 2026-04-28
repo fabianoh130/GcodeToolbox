@@ -53,7 +53,7 @@ const EntryMethod = {
 };
 
 /**
- * @typedef {{ x: number, y: number, z: number, type: 'rapid'|'cut' }} ToolpathMove
+ * @typedef {{ x: number, y: number, z: number, type: 'rapid'|'cut', feedOverridePct?: number }} ToolpathMove
  * @typedef {{ moves: ToolpathMove[], resultPaths?: {x:number,y:number,z:number}[][], resultTotalDepth?: number, resultBottomZ?: number, resultContourInside?: boolean, resultPathsWithDepth?: {path:{x:number,y:number,z:number}[], topZ:number, bottomZ:number}[], resultBounds?: {minX:number,maxX:number,minY:number,maxY:number}, toolDiameter?: number }} Toolpath
  */
 
@@ -189,7 +189,7 @@ const UNIT_LABEL_KEYS = [
   "form.diameter", "form.counterboreHeadDiameter", "form.counterboreDepth", "form.counterboreBoltDiameter",
   "form.side", "form.width", "form.height", "form.roundedCornerRadius", "form.hexagonHeight", "form.majorAxis", "form.minorAxis", "form.letterSize",
   "form.tabInterval", "form.tabWidth", "form.tabHeight",
-  "form.toolDiameter", "form.totalDepth", "form.stepdown", "form.feedrate", "form.safeHeight", "form.leadInAbove", "form.zOffset",
+  "form.toolDiameter", "form.totalDepth", "form.stepdown", "form.feedrate", "form.safeHeight", "form.leadInAbove", "form.zOffset", "form.finishingPassOverlap",
 ];
 
 function applyTranslations() {
@@ -1013,6 +1013,12 @@ function readInputsFromForm() {
   const finishingPassDistance = finishingPassEnabled
     ? toMm(toNumber(g("finishing-pass-distance")?.value), displayUnit)
     : 0;
+  const finishingPassSpeedOverridePct = finishingPassEnabled
+    ? toNumber(g("finishing-pass-speed-override")?.value)
+    : 100;
+  const finishingPassOverlap = finishingPassEnabled
+    ? toMm(toNumber(g("finishing-pass-overlap")?.value), displayUnit)
+    : 0;
 
   const cutParams = {
     toolDiameter,
@@ -1031,6 +1037,8 @@ function readInputsFromForm() {
     useArcsEnabled,
     finishingPassEnabled,
     finishingPassDistance: Number.isFinite(finishingPassDistance) && finishingPassDistance >= 0 ? finishingPassDistance : 0,
+    finishingPassSpeedOverridePct: Number.isFinite(finishingPassSpeedOverridePct) ? Math.max(5, Math.min(200, finishingPassSpeedOverridePct)) : 100,
+    finishingPassOverlap: Number.isFinite(finishingPassOverlap) && finishingPassOverlap >= 0 ? finishingPassOverlap : 0,
   };
 
   const originParams = {
@@ -1160,6 +1168,8 @@ function getParamsSnapshotReadOnly() {
 
   const finPassEnabled = isSimple ? false : (el("finishing-pass-enabled")?.checked ?? false);
   const finPassDist = finPassEnabled ? (vm("finishing-pass-distance") || 0) : 0;
+  const finPassSpeedOverridePct = finPassEnabled ? (v("finishing-pass-speed-override") || 100) : 100;
+  const finPassOverlap = finPassEnabled ? (vm("finishing-pass-overlap") || 0) : 0;
 
   const cp = {
     toolDiameter: toolD,
@@ -1178,6 +1188,8 @@ function getParamsSnapshotReadOnly() {
     useArcsEnabled: el("use-arcs-enabled")?.checked ?? false,
     finishingPassEnabled: finPassEnabled,
     finishingPassDistance: Number.isFinite(finPassDist) && finPassDist >= 0 ? finPassDist : 0,
+    finishingPassSpeedOverridePct: Number.isFinite(finPassSpeedOverridePct) ? Math.max(5, Math.min(200, finPassSpeedOverridePct)) : 100,
+    finishingPassOverlap: Number.isFinite(finPassOverlap) && finPassOverlap >= 0 ? finPassOverlap : 0,
   };
   const ss = v("spindle-speed");
   if (cp.spindleSpeedEnabled && Number.isFinite(ss) && ss > 0) cp.spindleSpeed = ss;
@@ -1275,6 +1287,19 @@ function validateInputs(raw) {
     cp.stepover > cp.toolDiameter
   ) {
     errors.push(t("error.stepoverTooBig"));
+  }
+
+  if (cp.finishingPassEnabled) {
+    if (!Number.isFinite(cp.finishingPassDistance) || cp.finishingPassDistance <= 0) {
+      errors.push(t("error.finishingPassDistanceRequired"));
+    }
+    if (
+      !Number.isFinite(cp.finishingPassSpeedOverridePct) ||
+      cp.finishingPassSpeedOverridePct < 5 ||
+      cp.finishingPassSpeedOverridePct > 200
+    ) {
+      errors.push(t("error.finishingPassSpeedOverrideRange"));
+    }
   }
 
   if (raw.cutParams.entryMethod === EntryMethod.RAMP) {
@@ -1928,6 +1953,54 @@ function generatePocketFinishingContour(shape, shapeParams, toolRadius) {
     return pts;
   }
   return null;
+}
+
+/**
+ * Verleng een gesloten contour met overlap vanaf de start van het pad.
+ * Zo wordt het beginstuk nogmaals gefreesd voor een betere sluiting.
+ * @param {{x:number,y:number,z:number}[]} path
+ * @param {number} overlapMm
+ * @returns {{x:number,y:number,z:number}[]}
+ */
+function withClosedPathOverlap(path, overlapMm) {
+  if (!Array.isArray(path) || path.length < 2) return path;
+  if (!Number.isFinite(overlapMm) || overlapMm <= 0) return path;
+
+  let perimeter = 0;
+  for (let i = 1; i < path.length; i++) {
+    const dx = path[i].x - path[i - 1].x;
+    const dy = path[i].y - path[i - 1].y;
+    const dz = path[i].z - path[i - 1].z;
+    perimeter += Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+  if (perimeter <= 1e-9) return path;
+
+  let remaining = Math.min(overlapMm, perimeter);
+  const out = path.map((p) => ({ x: p.x, y: p.y, z: p.z }));
+
+  for (let i = 1; i < path.length && remaining > 1e-9; i++) {
+    const a = path[i - 1];
+    const b = path[i];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const dz = b.z - a.z;
+    const segLen = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (segLen <= 1e-9) continue;
+
+    if (remaining >= segLen - 1e-9) {
+      out.push({ x: b.x, y: b.y, z: b.z });
+      remaining -= segLen;
+    } else {
+      const t = remaining / segLen;
+      out.push({
+        x: a.x + dx * t,
+        y: a.y + dy * t,
+        z: a.z + dz * t,
+      });
+      remaining = 0;
+    }
+  }
+  return out;
 }
 
 /**
@@ -3327,6 +3400,62 @@ function generateToolpath(params) {
     contourPath = adjustHexagonContourStartToEdgeMid(contourPath);
   }
 
+  // Bewaar de echte eindcontour voor finishing pass.
+  const contourFinishingPaths = contourPaths
+    ? contourPaths.map((path) => path.map((p) => ({ x: p.x, y: p.y, z: p.z })))
+    : null;
+  const contourFinishingPath = contourPath
+    ? contourPath.map((p) => ({ x: p.x, y: p.y, z: p.z }))
+    : null;
+
+  // Bij contour met finishing: roughing met extra offset, finishing op de echte contour.
+  const contourFinishingDist = (operation === OperationType.CONTOUR && cutParams.finishingPassEnabled && cutParams.finishingPassDistance > 0)
+    ? cutParams.finishingPassDistance
+    : 0;
+  if (operation === OperationType.CONTOUR && contourFinishingDist > 0) {
+    const roughToolRadius = toolRadius + contourFinishingDist;
+    if (shape === ShapeType.CIRCULAR_PATTERN_HOLES && contourType === "inside") {
+      const count = Math.max(1, shapeParams.count || 6);
+      const circleRadius = (shapeParams.circleDiameter || 80) / 2;
+      const startAngleDeg = Math.max(0, Math.min(360, shapeParams.startAngle ?? 0));
+      const startAngleRad = Math.PI / 2 - (startAngleDeg * Math.PI / 180);
+      const holeParams = { diameter: shapeParams.diameter };
+      const singleCircle = generateContourPathWithOffset(ShapeType.CIRCLE, holeParams, roughToolRadius, true);
+      if (singleCircle && singleCircle.length >= 2) {
+        contourPaths = [];
+        for (let i = 0; i < count; i++) {
+          const angle = startAngleRad + (2 * Math.PI * i) / count;
+          const cx = circleRadius * Math.cos(angle);
+          const cy = circleRadius * Math.sin(angle);
+          contourPaths.push(singleCircle.map((p) => ({ x: p.x + cx, y: p.y + cy, z: p.z })));
+        }
+        if (shapeParams.holeInCenter && Number.isFinite(shapeParams.centerHoleDiameter) && shapeParams.centerHoleDiameter > 0) {
+          const centerParams = { diameter: shapeParams.centerHoleDiameter };
+          const centerCircle = generateContourPathWithOffset(ShapeType.CIRCLE, centerParams, roughToolRadius, true);
+          if (centerCircle && centerCircle.length >= 2) {
+            contourPaths.push(centerCircle.map((p) => ({ x: p.x, y: p.y, z: p.z })));
+          }
+        }
+        contourPath = contourPaths[0] || [];
+      }
+    } else {
+      const roughContourPath = generateContourPathWithOffset(
+        shape,
+        shapeParams,
+        roughToolRadius,
+        contourType === "inside"
+      );
+      if (roughContourPath && roughContourPath.length >= 2) {
+        contourPath = roughContourPath;
+        if ((shape === ShapeType.SQUARE || shape === ShapeType.RECTANGLE) && contourPath.length >= 4) {
+          contourPath = adjustRectContourStartToEdgeMid(contourPath);
+        } else if (shape === ShapeType.HEXAGON && contourPath.length >= 6) {
+          contourPath = adjustHexagonContourStartToEdgeMid(contourPath);
+        }
+      }
+    }
+  }
+
   // Tabs voorbereiden (alleen contour)
   let tabConfig = null;
   if (operation === OperationType.CONTOUR && tabs && tabs.enabled) {
@@ -3507,6 +3636,22 @@ function generateToolpath(params) {
     }
   }
 
+  function tagRecentFinishingMoves(startIdx) {
+    const overridePct = Number.isFinite(cutParams.finishingPassSpeedOverridePct)
+      ? Math.max(5, Math.min(200, cutParams.finishingPassSpeedOverridePct))
+      : 100;
+    if (overridePct === 100) return;
+    for (let i = Math.max(0, startIdx); i < moves.length; i++) {
+      if (moves[i].type === "cut") {
+        moves[i].feedOverridePct = overridePct;
+      }
+    }
+  }
+  function getFinishingContourWithOverlap(contourPath) {
+    const overlapMm = Number.isFinite(cutParams.finishingPassOverlap) ? Math.max(0, cutParams.finishingPassOverlap) : 0;
+    return withClosedPathOverlap(contourPath, overlapMm);
+  }
+
   // Speciaal gedrag voor PATTERNED_HOLES en CIRCULAR_PATTERN_HOLES bij pockets:
   // eerst één gat volledig (alle depths + finishing pass), dan retract + travel naar het volgende gat.
   if (
@@ -3557,11 +3702,12 @@ function generateToolpath(params) {
       // net als bij een normale cirkel-pocket.
       if (useFinishing && finContour && finContour.length >= 2) {
         const last = moves[moves.length - 1];
-        const translatedContour = finContour.map((p) => ({
+        const finishingStartIdx = moves.length;
+        const translatedContour = getFinishingContourWithOverlap(finContour.map((p) => ({
           x: p.x + center.x,
           y: p.y + center.y,
           z: p.z,
-        }));
+        })));
         if (last && Math.abs(last.z - finalDepth) < 1e-6) {
           // Frees staat al op einddiepte: direct de finishing contour op dezelfde Z, geen retract.
           for (let i = 0; i < translatedContour.length; i++) {
@@ -3596,6 +3742,7 @@ function generateToolpath(params) {
             center.y
           );
         }
+        tagRecentFinishingMoves(finishingStartIdx);
       }
 
       // Na één volledig gat (alle depths + finishing): eerst klein stukje richting midden,
@@ -3708,6 +3855,19 @@ function generateToolpath(params) {
         pocketPaths.forEach((path, idx) => {
           const outside = plungeOutside && idx === 0;
           const center = (shape === ShapeType.PATTERNED_HOLES || shape === ShapeType.CIRCULAR_PATTERN_HOLES) && pocketCenters[idx] ? pocketCenters[idx] : { x: 0, y: 0 };
+          // Clamp helix-ramp radius op basis van het actuele pocketpad.
+          // Dit voorkomt dat de ramp buiten de roughing-contour komt bij kleine pockets
+          // met finishing-pass offset.
+          let pathMaxHelixRadius = 0;
+          for (let i = 0; i < path.length; i++) {
+            const p = path[i];
+            if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+            const r = Math.hypot(p.x - center.x, p.y - center.y);
+            if (r > pathMaxHelixRadius) pathMaxHelixRadius = r;
+          }
+          const effectiveMaxHelixRadius = Number.isFinite(maxHelixRadiusPocket)
+            ? Math.max(0, Math.min(maxHelixRadiusPocket, pathMaxHelixRadius))
+            : Math.max(0, pathMaxHelixRadius);
           addLayerForPath(
             moves,
             path,
@@ -3722,7 +3882,7 @@ function generateToolpath(params) {
             true,
             toolRadiusPocket,
             true,
-            maxHelixRadiusPocket,
+            effectiveMaxHelixRadius,
             center.x,
             center.y
           );
@@ -3760,6 +3920,55 @@ function generateToolpath(params) {
     });
   }
 
+  // Finishing pass voor contour: extra pass op einddiepte met overlap.
+  if (operation === OperationType.CONTOUR && cutParams.finishingPassEnabled && depths.length > 0) {
+    const finalDepth = depths[depths.length - 1];
+    const contourInside = contourType === "inside";
+    const toolRadiusContour = cutParams.toolDiameter / 2;
+    const finishingContourPaths = contourFinishingPaths || contourPaths;
+    const finishingContourPath = contourFinishingPath || contourPath;
+    function addContourFinishingPass(path, centerX, centerY, useTabConfig) {
+      if (!path || path.length < 2) return;
+      const finishingStartIdx = moves.length;
+      const finishingPath = getFinishingContourWithOverlap(path);
+      const last = moves[moves.length - 1];
+      if (last && Math.abs(last.z - finalDepth) < 1e-6) {
+        // Tool staat al op einddiepte: finishing direct doorlopend frezen.
+        for (let i = 0; i < finishingPath.length; i++) {
+          moves.push({ x: finishingPath[i].x, y: finishingPath[i].y, z: finalDepth, type: "cut" });
+        }
+      } else {
+        addLayerForPath(
+          moves,
+          finishingPath,
+          finalDepth,
+          cutParams,
+          false,
+          entryMethod,
+          true,
+          safeZ,
+          useTabConfig,
+          contourInside,
+          true,
+          toolRadiusContour,
+          true,
+          undefined,
+          centerX,
+          centerY
+        );
+      }
+      tagRecentFinishingMoves(finishingStartIdx);
+    }
+    if (finishingContourPaths && finishingContourPaths.length > 0) {
+      finishingContourPaths.forEach((path, idx) => {
+        const center = pocketCenters[idx] || { x: 0, y: 0 };
+        addContourFinishingPass(path, center.x, center.y, undefined);
+      });
+    } else if (finishingContourPath && finishingContourPath.length >= 2) {
+      addContourFinishingPass(finishingContourPath, undefined, undefined, tabConfig);
+    }
+  }
+
   // Nabewerkingslaag: één contourpad op de werkelijke pocketgrens (zonder outerOffset), alleen op volledige diepte.
   if (operation === OperationType.POCKET && cutParams.finishingPassEnabled && cutParams.finishingPassDistance > 0 && depths.length > 0) {
     const finalDepth = depths[depths.length - 1];
@@ -3768,25 +3977,31 @@ function generateToolpath(params) {
       const centerHoleParams = { diameter: shapeParams.centerHoleDiameter };
       const centerFinContour = generatePocketFinishingContour(ShapeType.CIRCLE, centerHoleParams, toolRadiusPocket);
       if (centerFinContour && centerFinContour.length >= 2) {
+        const finishingStartIdx = moves.length;
         const last = moves[moves.length - 1];
         if (last && last.z < safeZ - 1e-6) moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
-        addLayerForPath(moves, centerFinContour, finalDepth, cutParams, false, entryMethod, true, safeZ, undefined, false, true, toolRadiusPocket, true, maxHelixRadiusPocket, 0, 0);
+        const centerFinContourWithOverlap = getFinishingContourWithOverlap(centerFinContour);
+        addLayerForPath(moves, centerFinContourWithOverlap, finalDepth, cutParams, false, entryMethod, true, safeZ, undefined, false, true, toolRadiusPocket, true, maxHelixRadiusPocket, 0, 0);
+        tagRecentFinishingMoves(finishingStartIdx);
       }
     } else if (shape !== ShapeType.PATTERNED_HOLES && shape !== ShapeType.CIRCULAR_PATTERN_HOLES) {
       const finContour = generatePocketFinishingContour(shape, shapeParams, toolRadiusPocket);
       if (finContour && finContour.length >= 2) {
+        const finishingStartIdx = moves.length;
+        const finContourWithOverlap = getFinishingContourWithOverlap(finContour);
         const last = moves[moves.length - 1];
         if (last && Math.abs(last.z - finalDepth) < 1e-6) {
           // Frees zit al op einddiepte: rechtstreeks naar de startpositie van de nabewerking,
           // geen retract + herinsteken nodig.
-          for (let i = 0; i < finContour.length; i++) {
-            moves.push({ x: finContour[i].x, y: finContour[i].y, z: finalDepth, type: "cut" });
+          for (let i = 0; i < finContourWithOverlap.length; i++) {
+            moves.push({ x: finContourWithOverlap[i].x, y: finContourWithOverlap[i].y, z: finalDepth, type: "cut" });
           }
         } else {
           // Onverwacht: frees niet op einddiepte, val terug op retract + plunge.
           if (last && last.z < safeZ - 1e-6) moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
-          addLayerForPath(moves, finContour, finalDepth, cutParams, false, entryMethod, true, safeZ, undefined, false, true, toolRadiusPocket, true, maxHelixRadiusPocket, 0, 0);
+          addLayerForPath(moves, finContourWithOverlap, finalDepth, cutParams, false, entryMethod, true, safeZ, undefined, false, true, toolRadiusPocket, true, maxHelixRadiusPocket, 0, 0);
         }
+        tagRecentFinishingMoves(finishingStartIdx);
       }
     }
   }
@@ -4987,6 +5202,7 @@ function toolpathToGcode(toolpath, params) {
   if (cutParams.floodCoolantEnabled) lines.push(`M8  (${t("gcode.comment.coolantFloodOn")})`);
 
   let currentFeed = 0;
+  let currentFeedOverridePct = 100;
   let currentX = null;
   let currentY = null;
   const ARC_RADIUS_TOL_MM = 1.0;
@@ -5011,9 +5227,19 @@ function toolpathToGcode(toolpath, params) {
     if (!Number.isFinite(y)) return y;
     return mirrorY ? -y : y;
   }
+  function clampFeedOverridePct(value) {
+    if (!Number.isFinite(value)) return 100;
+    return Math.max(5, Math.min(200, Math.round(value)));
+  }
 
   while (idx < moves.length) {
     const m = moves[idx];
+    const targetFeedOverridePct = m.type === "cut" ? clampFeedOverridePct(m.feedOverridePct ?? 100) : 100;
+    if (targetFeedOverridePct !== currentFeedOverridePct) {
+      lines.push(`M220 S${targetFeedOverridePct}`);
+      currentFeedOverridePct = targetFeedOverridePct;
+      currentFeed = 0;
+    }
     const x = Number.isFinite(m.x) ? tx(m.x) : null;
     const y = Number.isFinite(m.y) ? ty(m.y) : null;
     const z = Number.isFinite(m.z) ? m.z : null;
@@ -5056,6 +5282,9 @@ function toolpathToGcode(toolpath, params) {
     idx++;
   }
 
+  if (currentFeedOverridePct !== 100) {
+    lines.push("M220 S100");
+  }
   lines.push(`G0 Z${safeZ.toFixed(decimals)}`);
   if (cutParams.mistCoolantEnabled || cutParams.floodCoolantEnabled) lines.push(`M9  (${t("gcode.comment.coolantOff")})`);
   lines.push(`M5  (${t("gcode.comment.spindleOff")})`);
@@ -6176,7 +6405,7 @@ function setupUI() {
     "counterbore-head-diameter", "counterbore-depth", "counterbore-bolt-diameter",
     "patterned-holes-diameter", "patterned-holes-spacing-x", "patterned-holes-spacing-y",
     "tab-interval", "tab-width", "tab-height",
-    "tool-diameter", "total-depth", "stepdown", "stepover", "feedrate", "safe-height", "lead-in-above", "z-offset",
+    "tool-diameter", "total-depth", "stepdown", "stepover", "feedrate", "safe-height", "lead-in-above", "z-offset", "finishing-pass-overlap",
   ];
   /** Minimum waarden in mm; in inch-modus omrekenen zodat HTML5-validatie en steppers kloppen. */
   const MIN_MM_BY_INPUT = {
@@ -6195,6 +6424,7 @@ function setupUI() {
     "tab-interval": 5, "tab-width": 1, "tab-height": 0.5,
     "tool-diameter": 1, "total-depth": 0.5, "stepdown": 0.5, "feedrate": 50,
     "safe-height": 1, "lead-in-above": 0.5, "z-offset": 0.5,
+    "finishing-pass-overlap": 0.1,
   };
   /** Inputs met vaste step in HTML (niet "any"); in inch step="any", in mm herstellen. */
   const INPUT_FIXED_STEP_MM = {
@@ -6973,14 +7203,18 @@ function setupUI() {
       }
     }
 
-    // Nabewerkingslaag is alleen relevant voor pocket
-    // Voor PATTERNED_HOLES is de operatie altijd pocket, ook als de select iets anders zegt
+    // Nabewerkingslaag is relevant voor pocket en contour.
+    // Voor PATTERNED_HOLES is de operatie altijd pocket, ook als de select iets anders zegt.
     const effectiveOpForPocket = (shape === ShapeType.PATTERNED_HOLES) ? OperationType.POCKET : op;
     const showPocket = effectiveOpForPocket === OperationType.POCKET;
+    const showFinishingPass = effectiveOpForPocket === OperationType.POCKET || effectiveOpForPocket === OperationType.CONTOUR;
     document.querySelectorAll(".pocket-only").forEach((el) => {
       el.classList.toggle("hidden", !showPocket);
     });
-    if (!showPocket) {
+    document.querySelectorAll(".finishing-pass-only").forEach((el) => {
+      el.classList.toggle("hidden", !showFinishingPass);
+    });
+    if (!showFinishingPass) {
       const fpCheckbox = /** @type {HTMLInputElement} */ (document.getElementById("finishing-pass-enabled"));
       if (fpCheckbox) fpCheckbox.checked = false;
     }
@@ -6989,7 +7223,12 @@ function setupUI() {
     {
       const fpCb = /** @type {HTMLInputElement} */ (document.getElementById("finishing-pass-enabled"));
       const fpDRow = document.getElementById("finishing-pass-distance-row");
-      if (fpCb && fpDRow) fpDRow.classList.toggle("hidden", !fpCb.checked);
+      const fpSpeedRow = document.getElementById("finishing-pass-speed-override-row");
+      const fpOverlapRow = document.getElementById("finishing-pass-overlap-row");
+      const showFinDistance = fpCb && fpCb.checked && (effectiveOpForPocket === OperationType.POCKET || effectiveOpForPocket === OperationType.CONTOUR);
+      if (fpCb && fpDRow) fpDRow.classList.toggle("hidden", !showFinDistance);
+      if (fpCb && fpSpeedRow) fpSpeedRow.classList.toggle("hidden", !fpCb.checked);
+      if (fpCb && fpOverlapRow) fpOverlapRow.classList.toggle("hidden", !fpCb.checked);
     }
 
     // Bij wisselen naar niet-contour: tabs uitzetten en parameters verbergen; insteken naast part uit
@@ -7224,19 +7463,64 @@ function setupUI() {
   // Nabewerkingslaag: finishing-pass-distance-row tonen/verbergen
   const finishingPassCheckbox = /** @type {HTMLInputElement} */ (document.getElementById("finishing-pass-enabled"));
   const finishingPassDistRow = document.getElementById("finishing-pass-distance-row");
+  const finishingPassSpeedOverrideRow = document.getElementById("finishing-pass-speed-override-row");
+  const finishingPassOverlapRow = document.getElementById("finishing-pass-overlap-row");
+  const finishingPassSpeedOverrideInput = /** @type {HTMLInputElement} */ (document.getElementById("finishing-pass-speed-override"));
+  const finishingPassSpeedOverrideValue = document.getElementById("finishing-pass-speed-override-value");
+  const finishingPassSpeedOverrideHint = document.getElementById("finishing-pass-speed-override-hint");
+  const feedrateInputForFinishingHint = /** @type {HTMLInputElement} */ (document.getElementById("feedrate"));
+  function updateFinishingPassSpeedOverrideHint() {
+    if (!finishingPassSpeedOverrideHint) return;
+    const displayUnit = getDisplayUnit();
+    const baseFeed = toNumber(feedrateInputForFinishingHint?.value);
+    const pct = finishingPassSpeedOverrideInput
+      ? Math.max(5, Math.min(200, Math.round(toNumber(finishingPassSpeedOverrideInput.value) || 100)))
+      : 100;
+    const feed = Number.isFinite(baseFeed) && baseFeed > 0 ? (baseFeed * pct) / 100 : 0;
+    const showVal = displayUnit === "inch"
+      ? (Math.round(feed * 100) / 100).toFixed(2)
+      : String(Math.round(feed));
+    const key = displayUnit === "inch"
+      ? "form.finishingPassSpeedOverrideHintIn"
+      : "form.finishingPassSpeedOverrideHintMm";
+    finishingPassSpeedOverrideHint.textContent = t(key, { val: showVal });
+  }
+  function updateFinishingPassSpeedOverrideValue() {
+    if (!finishingPassSpeedOverrideInput || !finishingPassSpeedOverrideValue) return;
+    const pct = Math.max(5, Math.min(200, Math.round(toNumber(finishingPassSpeedOverrideInput.value) || 100)));
+    finishingPassSpeedOverrideInput.value = String(pct);
+    finishingPassSpeedOverrideValue.textContent = `${pct}%`;
+    updateFinishingPassSpeedOverrideHint();
+  }
   function updateFinishingPassDistVisibility() {
     if (!finishingPassDistRow || !finishingPassCheckbox) return;
+    const op = (/** @type {HTMLSelectElement} */ (document.getElementById("operation")))?.value;
+    const showDistanceForOp = op === OperationType.POCKET || op === OperationType.CONTOUR;
     if (finishingPassCheckbox.checked) {
-      finishingPassDistRow.classList.remove("hidden");
+      finishingPassDistRow.classList.toggle("hidden", !showDistanceForOp);
+      if (finishingPassSpeedOverrideRow) finishingPassSpeedOverrideRow.classList.remove("hidden");
+      if (finishingPassOverlapRow) finishingPassOverlapRow.classList.remove("hidden");
     } else {
       finishingPassDistRow.classList.add("hidden");
+      if (finishingPassSpeedOverrideRow) finishingPassSpeedOverrideRow.classList.add("hidden");
+      if (finishingPassOverlapRow) finishingPassOverlapRow.classList.add("hidden");
     }
+    updateFinishingPassSpeedOverrideValue();
   }
   if (finishingPassCheckbox) {
     finishingPassCheckbox.tabIndex = -1;
     finishingPassCheckbox.addEventListener("change", updateFinishingPassDistVisibility);
     finishingPassCheckbox.addEventListener("click", updateFinishingPassDistVisibility);
   }
+  if (finishingPassSpeedOverrideInput) {
+    finishingPassSpeedOverrideInput.addEventListener("input", updateFinishingPassSpeedOverrideValue);
+    finishingPassSpeedOverrideInput.addEventListener("change", updateFinishingPassSpeedOverrideValue);
+  }
+  if (feedrateInputForFinishingHint) {
+    feedrateInputForFinishingHint.addEventListener("input", updateFinishingPassSpeedOverrideHint);
+    feedrateInputForFinishingHint.addEventListener("change", updateFinishingPassSpeedOverrideHint);
+  }
+  document.addEventListener("unitchange", updateFinishingPassSpeedOverrideHint);
   updateFinishingPassDistVisibility();
 
   // Spindle speed: spindle-speed-row tonen/verbergen
