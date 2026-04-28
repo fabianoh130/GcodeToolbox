@@ -6270,13 +6270,43 @@ function sanitizeFilename(name) {
     .trim() || "machine-settings";
 }
 
+function fallbackCopyToClipboard(text) {
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  textArea.style.position = "fixed";
+  textArea.style.left = "-9999px";
+  textArea.style.top = "0";
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch (_) {
+    copied = false;
+  }
+  document.body.removeChild(textArea);
+  return copied;
+}
+
 async function copyGcodeToClipboard(gcode) {
   try {
-    await navigator.clipboard.writeText(gcode);
-    alert(t("error.copySuccess"));
-  } catch (e) {
-    alert(t("error.copyFailed"));
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(gcode);
+      alert(t("error.copySuccess"));
+      return;
+    }
+    if (fallbackCopyToClipboard(gcode)) {
+      alert(t("error.copySuccess"));
+      return;
+    }
+  } catch (_) {
+    if (fallbackCopyToClipboard(gcode)) {
+      alert(t("error.copySuccess"));
+      return;
+    }
   }
+  alert(t("error.copyFailed"));
 }
 
 /**
