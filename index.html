@@ -12,7 +12,7 @@
     <header class="app-header">
       <div class="app-header-inner">
         <div>
-          <h1><span data-i18n="header.title">Gcode toolbox</span> <a href="https://github.com/fabianoh130/GcodeToolbox" target="_blank" rel="noopener noreferrer" class="app-version" data-i18n-title="header.checkForUpdates" title="Check for updates">v3.7</a></h1>
+          <h1><span data-i18n="header.title">Gcode toolbox</span> <a href="https://github.com/fabianoh130/GcodeToolbox" target="_blank" rel="noopener noreferrer" class="app-version" data-i18n-title="header.checkForUpdates" title="Check for updates">v3.8</a></h1>
         </div>
         <div class="settings-menu-wrapper">
           <button
@@ -690,6 +690,26 @@
               <label for="z-offset" data-i18n="form.zOffset">Z-offset (mm, optioneel)</label>
               <div class="input-with-stepper" data-step="0.5" data-min="">
                 <input type="number" id="z-offset" step="0.5" />
+                <div class="stepper-buttons">
+                  <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
+                  <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
+                </div>
+              </div>
+            </div>
+            <div class="field-row" data-mode="advanced">
+              <label for="origin-offset-x" data-i18n="form.originOffsetX">Origin offset X (mm)</label>
+              <div class="input-with-stepper" data-step="0.5" data-min="">
+                <input type="number" id="origin-offset-x" step="0.5" value="0" />
+                <div class="stepper-buttons">
+                  <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
+                  <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
+                </div>
+              </div>
+            </div>
+            <div class="field-row" data-mode="advanced">
+              <label for="origin-offset-y" data-i18n="form.originOffsetY">Origin offset Y (mm)</label>
+              <div class="input-with-stepper" data-step="0.5" data-min="">
+                <input type="number" id="origin-offset-y" step="0.5" value="0" />
                 <div class="stepper-buttons">
                   <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
                   <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>

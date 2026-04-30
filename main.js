@@ -189,7 +189,7 @@ const UNIT_LABEL_KEYS = [
   "form.diameter", "form.counterboreHeadDiameter", "form.counterboreDepth", "form.counterboreBoltDiameter",
   "form.side", "form.width", "form.height", "form.roundedCornerRadius", "form.hexagonHeight", "form.majorAxis", "form.minorAxis", "form.letterSize",
   "form.tabInterval", "form.tabWidth", "form.tabHeight",
-  "form.toolDiameter", "form.totalDepth", "form.stepdown", "form.feedrate", "form.safeHeight", "form.leadInAbove", "form.zOffset", "form.finishingPassOverlap",
+  "form.toolDiameter", "form.totalDepth", "form.stepdown", "form.feedrate", "form.safeHeight", "form.leadInAbove", "form.zOffset", "form.originOffsetX", "form.originOffsetY", "form.finishingPassOverlap",
 ];
 
 function applyTranslations() {
@@ -1045,6 +1045,8 @@ function readInputsFromForm() {
     xyOrigin: /** @type {HTMLSelectElement} */ (g("xy-origin")).value,
     zOrigin: /** @type {HTMLSelectElement} */ (g("z-origin")).value,
     zOffset: isSimpleMode ? 0 : toMm(toNumber(g("z-offset").value) || 0, displayUnit),
+    originOffsetX: isSimpleMode ? 0 : toMm(toNumber(g("origin-offset-x")?.value) || 0, displayUnit),
+    originOffsetY: isSimpleMode ? 0 : toMm(toNumber(g("origin-offset-y")?.value) || 0, displayUnit),
   };
   const entryMethod = isSimpleMode ? EntryMethod.PLUNGE : (/** @type {HTMLInputElement} */ (g("entry-method"))?.value);
 
@@ -1198,6 +1200,8 @@ function getParamsSnapshotReadOnly() {
     xyOrigin: el("xy-origin")?.value,
     zOrigin: el("z-origin")?.value,
     zOffset: isSimple ? 0 : (vm("z-offset") || 0),
+    originOffsetX: isSimple ? 0 : (vm("origin-offset-x") || 0),
+    originOffsetY: isSimple ? 0 : (vm("origin-offset-y") || 0),
   };
   const plungeRaw = el("plunge-outside")?.value ?? "off";
   const plunge = isSimple ? false : ((operation === OperationType.POCKET || operation === OperationType.FACING || shape === ShapeType.DXF) ? false : plungeRaw === "on");
@@ -2598,8 +2602,8 @@ function computeOriginShift(
     shiftY = -(minY + maxY) / 2;
   }
   return {
-    shiftX,
-    shiftY,
+    shiftX: shiftX - (Number.isFinite(originParams.originOffsetX) ? originParams.originOffsetX : 0),
+    shiftY: shiftY - (Number.isFinite(originParams.originOffsetY) ? originParams.originOffsetY : 0),
     zOffset: originParams.zOffset || 0,
     zOriginMode: originParams.zOrigin || ZOrigin.STOCK_TOP,
   };
@@ -6211,6 +6215,8 @@ const MACHINE_SETTINGS_SCHEMA = [
   { key: "safeHeight", formId: "safe-height", type: "number" },
   { key: "leadInAbove", formId: "lead-in-above", type: "number" },
   { key: "zOffset", formId: "z-offset", type: "number" },
+  { key: "originOffsetX", formId: "origin-offset-x", type: "number" },
+  { key: "originOffsetY", formId: "origin-offset-y", type: "number" },
 ];
 
 /** Default waarden voor ontbrekende keys bij import. */
@@ -6227,6 +6233,8 @@ const MACHINE_SETTINGS_DEFAULTS = {
   safeHeight: 10,
   leadInAbove: 2,
   zOffset: 0,
+  originOffsetX: 0,
+  originOffsetY: 0,
 };
 
 const LAST_SETTINGS_STORAGE_KEY = "gcode-last-settings";
@@ -6250,6 +6258,8 @@ function saveLastSettings() {
       safeHeight: toNumber(document.getElementById("safe-height")?.value),
       leadInAbove: toNumber(document.getElementById("lead-in-above")?.value),
       zOffset: toNumber(document.getElementById("z-offset")?.value),
+      originOffsetX: toNumber(document.getElementById("origin-offset-x")?.value),
+      originOffsetY: toNumber(document.getElementById("origin-offset-y")?.value),
     };
     MACHINE_SETTINGS_SCHEMA.forEach(({ key, type }) => {
       const val = data[key];
@@ -6435,7 +6445,7 @@ function setupUI() {
     "counterbore-head-diameter", "counterbore-depth", "counterbore-bolt-diameter",
     "patterned-holes-diameter", "patterned-holes-spacing-x", "patterned-holes-spacing-y",
     "tab-interval", "tab-width", "tab-height",
-    "tool-diameter", "total-depth", "stepdown", "stepover", "feedrate", "safe-height", "lead-in-above", "z-offset", "finishing-pass-overlap",
+    "tool-diameter", "total-depth", "stepdown", "stepover", "feedrate", "safe-height", "lead-in-above", "z-offset", "origin-offset-x", "origin-offset-y", "finishing-pass-overlap",
   ];
   /** Minimum waarden in mm; in inch-modus omrekenen zodat HTML5-validatie en steppers kloppen. */
   const MIN_MM_BY_INPUT = {
@@ -6453,13 +6463,13 @@ function setupUI() {
     "counterbore-head-diameter": 1, "counterbore-depth": 0.5, "counterbore-bolt-diameter": 0.5,
     "tab-interval": 5, "tab-width": 1, "tab-height": 0.5,
     "tool-diameter": 1, "total-depth": 0.5, "stepdown": 0.5, "feedrate": 50,
-    "safe-height": 1, "lead-in-above": 0.5, "z-offset": 0.5,
+    "safe-height": 1, "lead-in-above": 0.5, "z-offset": 0.5, "origin-offset-x": 0.5, "origin-offset-y": 0.5,
     "finishing-pass-overlap": 0.1,
   };
   /** Inputs met vaste step in HTML (niet "any"); in inch step="any", in mm herstellen. */
   const INPUT_FIXED_STEP_MM = {
     "tab-interval": 1, "tab-width": 1, "safe-height": 1,
-    "feedrate": 50, "lead-in-above": 0.5, "z-offset": 0.5,
+    "feedrate": 50, "lead-in-above": 0.5, "z-offset": 0.5, "origin-offset-x": 0.5, "origin-offset-y": 0.5,
   };
   /** Default waarden in inch (afgeleid van mm-defaults, afgerond op logische inch-waarden). Stepover blijft %. */
   const DEFAULT_VALUES_INCH = {
@@ -6486,6 +6496,8 @@ function setupUI() {
     "feedrate": 30,
     "safe-height": 0.5,
     "lead-in-above": 0.1,
+    "origin-offset-x": 0,
+    "origin-offset-y": 0,
   };
   function applyInchDefaults() {
     Object.keys(DEFAULT_VALUES_INCH).forEach((id) => {
@@ -6702,6 +6714,8 @@ function setupUI() {
         safeHeight: toNumber(document.getElementById("safe-height")?.value),
         leadInAbove: toNumber(document.getElementById("lead-in-above")?.value),
         zOffset: toNumber(document.getElementById("z-offset")?.value),
+        originOffsetX: toNumber(document.getElementById("origin-offset-x")?.value),
+        originOffsetY: toNumber(document.getElementById("origin-offset-y")?.value),
       };
       MACHINE_SETTINGS_SCHEMA.forEach(({ key, type }) => {
         const val = data[key];
