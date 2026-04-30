@@ -1009,7 +1009,10 @@ function readInputsFromForm() {
   const mirrorYEnabled = isSimpleMode ? false : (/** @type {HTMLInputElement} */ (g("mirror-y-enabled"))?.checked ?? false);
   const useArcsEnabled = /** @type {HTMLInputElement} */ (g("use-arcs-enabled"))?.checked ?? false;
 
-  const finishingPassEnabled = isSimpleMode ? false : (/** @type {HTMLInputElement} */ (g("finishing-pass-enabled"))?.checked ?? false);
+  const finishingPassSupported = operation === OperationType.POCKET || operation === OperationType.CONTOUR;
+  const finishingPassEnabled = isSimpleMode
+    ? false
+    : (finishingPassSupported && ((/** @type {HTMLInputElement} */ (g("finishing-pass-enabled"))?.checked ?? false)));
   const finishingPassDistance = finishingPassEnabled
     ? toMm(toNumber(g("finishing-pass-distance")?.value), displayUnit)
     : 0;
@@ -1168,7 +1171,8 @@ function getParamsSnapshotReadOnly() {
     stepoverMm = Math.min(stepoverMm, Number.isFinite(toolD) ? toolD : stepoverMm);
   }
 
-  const finPassEnabled = isSimple ? false : (el("finishing-pass-enabled")?.checked ?? false);
+  const finishingPassSupported = operation === OperationType.POCKET || operation === OperationType.CONTOUR;
+  const finPassEnabled = isSimple ? false : (finishingPassSupported && (el("finishing-pass-enabled")?.checked ?? false));
   const finPassDist = finPassEnabled ? (vm("finishing-pass-distance") || 0) : 0;
   const finPassSpeedOverridePct = finPassEnabled ? (v("finishing-pass-speed-override") || 100) : 100;
   const finPassOverlap = finPassEnabled ? (vm("finishing-pass-overlap") || 0) : 0;
@@ -6987,6 +6991,8 @@ function setupUI() {
         if (typeof updateStepoverHint === "function") updateStepoverHint();
         if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
       }
+      // Forceer alle operatie-afhankelijke rijen (incl. finishing pass) meteen bij switch naar facing.
+      updateContourTypeVisibility();
     } else {
       if (operationRow) operationRow.classList.remove("hidden");
       facingOnlyElems.forEach((el) => el.classList.add("hidden"));
@@ -7249,7 +7255,9 @@ function setupUI() {
 
     // Nabewerkingslaag is relevant voor pocket en contour.
     // Voor PATTERNED_HOLES is de operatie altijd pocket, ook als de select iets anders zegt.
-    const effectiveOpForPocket = (shape === ShapeType.PATTERNED_HOLES) ? OperationType.POCKET : op;
+    const effectiveOpForPocket = shape === ShapeType.FACING
+      ? OperationType.FACING
+      : (shape === ShapeType.PATTERNED_HOLES ? OperationType.POCKET : op);
     const showPocket = effectiveOpForPocket === OperationType.POCKET;
     const showFinishingPass = effectiveOpForPocket === OperationType.POCKET || effectiveOpForPocket === OperationType.CONTOUR;
     document.querySelectorAll(".pocket-only").forEach((el) => {
@@ -7258,8 +7266,9 @@ function setupUI() {
     document.querySelectorAll(".finishing-pass-only").forEach((el) => {
       el.classList.toggle("hidden", !showFinishingPass);
     });
+    const fpCheckbox = /** @type {HTMLInputElement|null} */ (document.getElementById("finishing-pass-enabled"));
+    if (fpCheckbox) fpCheckbox.disabled = !showFinishingPass;
     if (!showFinishingPass) {
-      const fpCheckbox = /** @type {HTMLInputElement} */ (document.getElementById("finishing-pass-enabled"));
       if (fpCheckbox) fpCheckbox.checked = false;
     }
     // Synchroniseer de afstandsrij met de checkboxstatus (ook bij wisselen naar pocket).
@@ -7538,8 +7547,19 @@ function setupUI() {
   }
   function updateFinishingPassDistVisibility() {
     if (!finishingPassDistRow || !finishingPassCheckbox) return;
-    const op = (/** @type {HTMLSelectElement} */ (document.getElementById("operation")))?.value;
-    const showDistanceForOp = op === OperationType.POCKET || op === OperationType.CONTOUR;
+    const opType = (/** @type {HTMLSelectElement} */ (document.getElementById("operation-type")))?.value ?? OperationTypeCategory.SHAPES;
+    const shape = opType === OperationTypeCategory.SHAPES
+      ? (/** @type {HTMLSelectElement} */ (document.getElementById("shape")))?.value
+      : opType;
+    const opRaw = (/** @type {HTMLSelectElement} */ (document.getElementById("operation")))?.value;
+    const effectiveOp = shape === ShapeType.FACING
+      ? OperationType.FACING
+      : (shape === ShapeType.PATTERNED_HOLES ? OperationType.POCKET : opRaw);
+    const showDistanceForOp = effectiveOp === OperationType.POCKET || effectiveOp === OperationType.CONTOUR;
+    finishingPassCheckbox.disabled = !showDistanceForOp;
+    if (!showDistanceForOp) {
+      finishingPassCheckbox.checked = false;
+    }
     if (finishingPassCheckbox.checked) {
       finishingPassDistRow.classList.toggle("hidden", !showDistanceForOp);
       if (finishingPassSpeedOverrideRow) finishingPassSpeedOverrideRow.classList.remove("hidden");
