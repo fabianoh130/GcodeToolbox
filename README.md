@@ -35,6 +35,14 @@ This project was created out of my own need for a practical toolbox, and I want 
 
 # Version
 
+## 3.8
+* Added origin offset
+* Fixed a bug where finishing pass was showed in facing operation
+* Added Cross and contour finish to facing
+* Fixed a bug where the playback would skip some steps when de speed was changed
+* Added the playback speed to the local storage save so it doesnt have to be set each time
+
+
 ## 3.7
 * Fixed an issue reported by a user where the copy gcode button did not work when ran in a Docker environment.
 
