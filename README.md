@@ -21,9 +21,7 @@ Im still working on this project. If you encounter any bugs or have ideas for ne
 
 # Future plans
 Things im considering doing in the future versions:
-* G2/G3 arcs
-* Offset from origin
-
+* Open for suggestions
 
 # Support this project
 If you like this project and want to support me, feel free to do so via [this link](https://ko-fi.com/fabianoh130).
