@@ -2443,7 +2443,7 @@ function generateFacingSpiralPath(shape, shapeParams, stepover, toolRadius) {
   // Offset the first pass inward by the smaller of stepover or tool radius.
   // When stepover < toolRadius: inset = stepover, tool overhangs edge, engagement = stepover (consistent).
   // When stepover >= toolRadius: inset = toolRadius, tool just reaches edge, no coverage gap.
-  const inset = Math.min(stepover, toolRadius);
+  const inset = stepover - toolRadius;
   let xMin = -partW / 2 + inset;
   let xMax = partW / 2 - inset;
   let yMin = -partH / 2 + inset;
