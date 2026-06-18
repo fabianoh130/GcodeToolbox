@@ -3962,26 +3962,31 @@ function generateToolpath(params) {
               facingPath = [{ x: leadInX, y: leadInY, z: 0 }, ...path];
             }
           }
+// Force retract + lead-in for the first strip of every depth layer past the first,
+// so multi-depth facing always: G0 to safe Z -> G0 to next start XY -> G0 to lead-in Z -> G1 to depthZ.
+// Strips within the same layer still keep the tool down (keepToolDownBetweenPaths = true).
+		      	const allowContinuingForFacing = !(idx === 0 && depthIndex > 0);
+
           addLayerForPath(
-            moves,
-            facingPath,
-            depthZ,
-            cutParams,
-            false,
-            entryMethod === EntryMethod.LEAD_IN ? EntryMethod.PLUNGE : entryMethod,
-            idx === 0,
-            safeZ,
-            undefined,
-            false,
-            true,
-            toolRadiusFacing,
-            true,
-            maxHelixRadiusFacing,
-            0,
-            0,
-            true,
-            true  // keepToolDownBetweenPaths: geen retract tussen strips
-          );
+      			moves,
+		      	facingPath,
+	      		depthZ,
+	      		cutParams,
+	      		false,
+	      		entryMethod === EntryMethod.LEAD_IN ? EntryMethod.PLUNGE : entryMethod,
+	      		idx === 0,
+		      	safeZ,
+		      	undefined,
+	      		false,
+	      		true,
+		      	toolRadiusFacing,
+	      		true,
+      			maxHelixRadiusFacing,
+      			0,
+	      		0,
+	      		allowContinuingForFacing,   // was: true
+	      		true                        // keepToolDownBetweenPaths
+	      		);
         });
       } else {
         // Pocket: één spiraalpad per laag (cirkel/ellips/rechthoek), stepover gerespecteerd
