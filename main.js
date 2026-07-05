@@ -7181,9 +7181,9 @@ const CHAIN_BASELINE_FIELD_IDS = [
 
 function isChainModeEnabled() {
   try {
-    return localStorage.getItem(CHAIN_MODE_STORAGE_KEY) === "on";
+    return localStorage.getItem(CHAIN_MODE_STORAGE_KEY) !== "off";
   } catch (_) {
-    return false;
+    return true;
   }
 }
 
