@@ -7139,7 +7139,8 @@ const MACHINE_SETTINGS_DEFAULTS = {
 };
 
 const LAST_SETTINGS_STORAGE_KEY = "gcode-last-settings";
-const CHAIN_MODE_STORAGE_KEY = "gcode-chain-mode";
+const CHAIN_MODE_STORAGE_KEY = "gcode-chain-enabled";
+const LEGACY_CHAIN_MODE_STORAGE_KEY = "gcode-chain-mode";
 
 /** @type {{ id: string, formState: object, dxfText: string|null }[]} */
 let chainJobSteps = [];
@@ -7187,9 +7188,22 @@ function isChainModeEnabled() {
   }
 }
 
+function initChainModeOnStartup(refreshStepOneFromForm = false) {
+  if (isChainModeEnabled()) {
+    setChainModeEnabled(true);
+  } else {
+    applyChainModeUI(false);
+  }
+  if (refreshStepOneFromForm && isChainModeEnabled() && chainJobSteps[0]) {
+    chainJobSteps[0].formState = captureFormStateForChain();
+    renderChainStepsBar();
+  }
+}
+
 function setChainModeEnabled(enabled) {
   try {
     localStorage.setItem(CHAIN_MODE_STORAGE_KEY, enabled ? "on" : "off");
+    localStorage.removeItem(LEGACY_CHAIN_MODE_STORAGE_KEY);
   } catch (_) {}
   applyChainModeUI(enabled);
 }
@@ -7730,6 +7744,8 @@ function setupUI() {
       setChainModeEnabled(btn.getAttribute("data-chain") === "on");
     });
   });
+
+  initChainModeOnStartup();
 
   const chainAddStepBtn = document.getElementById("chain-add-step-btn");
   if (chainAddStepBtn) {
@@ -9952,7 +9968,7 @@ function setupUI() {
   // init defaults
   updateUIForOperationTypeAndShape();
   restoreLastSettings();
-  applyChainModeUI(isChainModeEnabled());
+  initChainModeOnStartup(true);
   updateRegenerateIndicator();
 
   // lege preview
@@ -9962,4 +9978,14 @@ function setupUI() {
 }
 
 document.addEventListener("DOMContentLoaded", setupUI);
+
+function bootChainModeImmediately() {
+  initChainModeOnStartup(false);
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", bootChainModeImmediately);
+} else {
+  bootChainModeImmediately();
+}
 

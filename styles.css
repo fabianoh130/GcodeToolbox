@@ -1186,6 +1186,10 @@ body.theme-light .outline-hint--warning {
 }
 
 /* Operation chain: steps bar */
+body[data-chain-mode="off"] #chain-steps-bar {
+  display: none !important;
+}
+
 .chain-steps-bar {
   border-bottom: 1px solid var(--border-subtle, #1e293b);
   background: var(--panel-bg, #0f172a);

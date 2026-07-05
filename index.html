@@ -7,7 +7,7 @@
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="stylesheet" href="styles.css" />
 </head>
-<body>
+<body data-chain-mode="on">
   <div class="app">
     <header class="app-header">
       <div class="app-header-inner">
@@ -88,8 +88,8 @@
                 <span class="settings-submenu-chevron" aria-hidden="true">▸</span>
               </button>
               <div id="chain-submenu" class="settings-submenu settings-submenu--side hidden" role="menu">
-                <button type="button" class="settings-chain-item" data-chain="off" data-i18n="settings.chainOff">Off</button>
-                <button type="button" class="settings-chain-item" data-chain="on" data-i18n="settings.chainOn">On</button>
+                <button type="button" class="settings-chain-item" data-chain="off" data-i18n="settings.chainOff" aria-pressed="false">Off</button>
+                <button type="button" class="settings-chain-item" data-chain="on" data-i18n="settings.chainOn" aria-pressed="true">On</button>
               </div>
             </div>
             <div class="settings-section settings-section--machine">
@@ -102,7 +102,7 @@
       </div>
     </header>
 
-    <div id="chain-steps-bar" class="chain-steps-bar hidden" role="region" aria-label="Operation steps">
+    <div id="chain-steps-bar" class="chain-steps-bar" role="region" aria-label="Operation steps">
       <div class="chain-steps-bar-inner">
         <span class="chain-steps-label" data-i18n="chain.stepsLabel">Steps</span>
         <div id="chain-steps-list" class="chain-steps-list"></div>
@@ -1035,7 +1035,7 @@
   <script src="translations.js"></script>
   <!-- Optioneel: na "node scripts/fetch-font-base64.js" uitvoeren kun je de regel hieronder inschakelen voor volledig offline lettergravering -->
   <!-- <script src="font-base64.js"></script> -->
-  <script src="main.js"></script>
+  <script src="main.js?v=chain-default-on"></script>
 </body>
 </html>
 
