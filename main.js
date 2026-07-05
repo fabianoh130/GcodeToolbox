@@ -12,6 +12,7 @@ const ShapeType = {
   ELLIPSE: "ellipse",
   LETTERS: "letters",
   COUNTERBORE_BOLT: "counterbore_bolt",
+  THREAD_MILLING: "thread_milling",
   PATTERNED_HOLES: "patterned_holes",
   CIRCULAR_PATTERN_HOLES: "circular_pattern_holes",
   DXF: "dxf",
@@ -29,10 +30,155 @@ const OperationTypeCategory = {
   FACING: "facing",
   LETTERS: "letters",
   COUNTERBORE_BOLT: "counterbore_bolt",
-  PATTERNED_HOLES: "patterned_holes",
-  CIRCULAR_PATTERN_HOLES: "circular_pattern_holes",
+  THREAD_MILLING: "thread_milling",
+  HOLE_PATTERN: "hole_pattern",
   DXF: "dxf",
 };
+
+/** Patroontype binnen de samengevoegde patroongaten-operatie (UI-keuze). */
+const HolePatternLayout = {
+  GRID: "grid",
+  CIRCULAR: "circular",
+};
+
+/** @returns {string} */
+function getHolePatternLayout() {
+  const el = /** @type {HTMLSelectElement | null} */ (document.getElementById("hole-pattern-layout"));
+  return el?.value === HolePatternLayout.CIRCULAR ? HolePatternLayout.CIRCULAR : HolePatternLayout.GRID;
+}
+
+/**
+ * Bepaalt de effectieve vorm op basis van operatiecategorie en (optioneel) vorm-dropdown.
+ * @param {string} opType
+ * @param {string|undefined|null} shapeValue
+ * @returns {string}
+ */
+function resolveEffectiveShape(opType, shapeValue) {
+  if (opType === OperationTypeCategory.SHAPES) {
+    return shapeValue ?? ShapeType.CIRCLE;
+  }
+  if (opType === OperationTypeCategory.HOLE_PATTERN) {
+    return getHolePatternLayout() === HolePatternLayout.CIRCULAR
+      ? ShapeType.CIRCULAR_PATTERN_HOLES
+      : ShapeType.PATTERNED_HOLES;
+  }
+  if (opType === "circular_pattern_holes") return ShapeType.CIRCULAR_PATTERN_HOLES;
+  if (opType === "patterned_holes") return ShapeType.PATTERNED_HOLES;
+  return opType;
+}
+
+/** @param {string|undefined|null} value */
+function normalizeContourType(value) {
+  if (value === "inside" || value === "outside" || value === "engraving") return value;
+  return "outside";
+}
+
+/**
+ * @param {string} shape
+ * @param {string|undefined|null} contourType
+ * @param {string|undefined|null} [letterMode]
+ */
+function isEngravingContourMode(shape, contourType, letterMode) {
+  return getEngravingToolDiameterMm(shape, contourType, letterMode) != null;
+}
+
+const DXF_ENGRAVING_TOOL_DIAMETER_MM = 4;
+
+/**
+ * Vaste freesdiameter voor gravure-modi waar het pad niet wordt geoffset.
+ * @param {string} shape
+ * @param {string|undefined|null} contourType
+ * @param {string|undefined|null} [letterMode]
+ * @returns {number|null}
+ */
+function getEngravingToolDiameterMm(shape, contourType, letterMode) {
+  if (shape === ShapeType.LETTERS && (letterMode || "outline") === "outline") return 0.5;
+  if (shape === ShapeType.DXF && normalizeContourType(contourType) === "engraving") return DXF_ENGRAVING_TOOL_DIAMETER_MM;
+  return null;
+}
+
+/** Gravure: altijd plunge — ramp laat een zichtbare streep achter op smalle lijnen. */
+function effectiveEntryMethod(shape, contourType, letterMode, entryMethod) {
+  return isEngravingContourMode(shape, contourType, letterMode)
+    ? EntryMethod.PLUNGE
+    : (entryMethod || EntryMethod.PLUNGE);
+}
+
+/** ISO metrisch / UNC inch draad-presets (alle maten in mm). */
+const THREAD_PRESETS = {
+  metric: {
+    M3: { majorDia: 3.0, pitch: 0.5, holeDia: 2.5, defaultDepth: 4.5 },
+    M4: { majorDia: 4.0, pitch: 0.7, holeDia: 3.3, defaultDepth: 6.0 },
+    M5: { majorDia: 5.0, pitch: 0.8, holeDia: 4.2, defaultDepth: 7.5 },
+    M6: { majorDia: 6.0, pitch: 1.0, holeDia: 5.0, defaultDepth: 9.0 },
+    M8: { majorDia: 8.0, pitch: 1.25, holeDia: 6.8, defaultDepth: 12.0 },
+    M10: { majorDia: 10.0, pitch: 1.5, holeDia: 8.5, defaultDepth: 15.0 },
+    M12: { majorDia: 12.0, pitch: 1.75, holeDia: 10.2, defaultDepth: 18.0 },
+  },
+  inch: {
+    "1/4-20": { majorDia: 6.35, pitch: 1.27, holeDia: 5.1, defaultDepth: 9.5 },
+    "5/16-18": { majorDia: 7.938, pitch: 1.411, holeDia: 6.6, defaultDepth: 11.1 },
+    "3/8-16": { majorDia: 9.525, pitch: 1.587, holeDia: 8.0, defaultDepth: 12.7 },
+    "1/2-13": { majorDia: 12.7, pitch: 1.954, holeDia: 10.8, defaultDepth: 17.5 },
+    "5/8-11": { majorDia: 15.875, pitch: 2.309, holeDia: 13.5, defaultDepth: 22.0 },
+    "3/4-10": { majorDia: 19.05, pitch: 2.54, holeDia: 16.5, defaultDepth: 25.4 },
+  },
+};
+
+/**
+ * Radiale pass-stralen voor draadfrezen: roughing van binnen naar buiten, laatste pass op finish-straal.
+ * @param {number} holeDiameter
+ * @param {number} majorDiameter
+ * @param {number} toolDiameter
+ * @param {number} stepover
+ * @returns {number[]}
+ */
+function computeThreadMillingPassRadii(holeDiameter, majorDiameter, toolDiameter, stepover) {
+  const rMax = Math.max(0, (majorDiameter - toolDiameter) / 2);
+  if (rMax <= 1e-6) return [];
+  const rMin = Math.max(0, (holeDiameter - toolDiameter) / 2);
+  if (rMax <= rMin + 1e-6) return [rMax];
+  if (!Number.isFinite(stepover) || stepover <= 0) return [rMax];
+
+  const radii = [];
+  let r = rMin;
+  while (r < rMax - 1e-6) {
+    radii.push(r);
+    r += stepover;
+  }
+  if (radii.length === 0 || radii[radii.length - 1] < rMax - 1e-6) {
+    radii.push(rMax);
+  }
+  return radii;
+}
+
+/** Veiligheidspasses (radiale stepover) voor draadfrezen — code aanwezig, later inschakelen. */
+const THREAD_MILLING_SPRING_PASSES_ENABLED = false;
+
+const ThreadMillType = {
+  INTERNAL: "internal",
+  EXTERNAL: "external",
+};
+
+/**
+ * Finish-straal freescentrum voor draadfrezen (mm).
+ * Binnen: (major − tool) / 2; buiten: (major + tool) / 2.
+ */
+function getThreadMillingFinishRadius(majorDia, toolDia, threadMillType) {
+  const external = threadMillType === ThreadMillType.EXTERNAL;
+  const r = external ? (majorDia + toolDia) / 2 : (majorDia - toolDia) / 2;
+  return Math.max(0, r);
+}
+
+/** Draairichting helix: binnen CCW (+1), buiten CW (−1) voor climb milling. */
+function getThreadMillingHelixSign(threadMillType) {
+  return threadMillType === ThreadMillType.EXTERNAL ? -1 : 1;
+}
+
+/** Benaderde kerfdiameter ISO-60° uitwendige metrische draad (mm). */
+function externalThreadMinorDiameter(majorDia, pitch) {
+  return majorDia - 1.226869 * pitch;
+}
 
 const XYOrigin = {
   CENTER: "center",
@@ -58,6 +204,7 @@ const EntryMethod = {
  */
 
 const DEFAULT_SAFE_Z = 10; // mm, standaard veilige hoogte (overschrijfbaar via formulier)
+const GCODE_TOOLBOX_URL = "https://fabianoh130.github.io/GcodeToolbox/";
 
 /** Conversie display-eenheid naar mm (intern). */
 const MM_PER_INCH = 25.4;
@@ -187,6 +334,7 @@ const UNIT_LABEL_KEYS = [
   "form.patternedHolesDiameter", "form.patternedHolesSpacingX", "form.patternedHolesSpacingY",
   "form.circularPatternHolesDiameter", "form.circularPatternHolesCircleDiameter", "form.circularPatternHolesCenterDiameter",
   "form.diameter", "form.counterboreHeadDiameter", "form.counterboreDepth", "form.counterboreBoltDiameter",
+  "form.threadMajorDiameter", "form.threadPitch", "form.threadHoleDiameter", "form.threadMillingDepth",
   "form.side", "form.width", "form.height", "form.roundedCornerRadius", "form.hexagonHeight", "form.majorAxis", "form.minorAxis", "form.letterSize",
   "form.tabInterval", "form.tabWidth", "form.tabHeight",
   "form.toolDiameter", "form.totalDepth", "form.stepdown", "form.feedrate", "form.safeHeight", "form.leadInAbove", "form.zOffset", "form.originOffsetX", "form.originOffsetY", "form.finishingPassOverlap",
@@ -263,6 +411,8 @@ function getShapeMinSize(shape, shapeParams) {
       return shapeParams.fontSize;
     case ShapeType.COUNTERBORE_BOLT:
       return Math.min(shapeParams.headDiameter || Infinity, shapeParams.boltDiameter || Infinity);
+    case ShapeType.THREAD_MILLING:
+      return shapeParams.holeDiameter;
     case ShapeType.PATTERNED_HOLES:
       return shapeParams.diameter;
     case ShapeType.CIRCULAR_PATTERN_HOLES:
@@ -904,9 +1054,10 @@ function readInputsFromForm() {
   const displayUnit = getDisplayUnit();
 
   const operationTypeCategory = /** @type {HTMLSelectElement} */ (g("operation-type"))?.value ?? OperationTypeCategory.SHAPES;
-  const shape = operationTypeCategory === OperationTypeCategory.SHAPES
-    ? /** @type {HTMLSelectElement} */ (g("shape")).value
-    : operationTypeCategory;
+  const shape = resolveEffectiveShape(
+    operationTypeCategory,
+    /** @type {HTMLSelectElement} */ (g("shape"))?.value
+  );
   const operationRaw = /** @type {HTMLSelectElement} */ (g("operation")).value;
   const operation = (shape === ShapeType.FACING ? OperationType.FACING : shape === ShapeType.PATTERNED_HOLES ? OperationType.POCKET : operationRaw);
 
@@ -917,7 +1068,11 @@ function readInputsFromForm() {
     shapeParams.size = toMm(toNumber(g("square-size").value), displayUnit);
     const cornerEl = g("rounded-corner-radius");
     shapeParams.cornerRadius = cornerEl ? Math.max(0, toMm(toNumber(cornerEl.value), displayUnit)) : 0;
-  } else if (shape === ShapeType.RECTANGLE || shape === ShapeType.FACING) {
+  } else if (shape === ShapeType.FACING) {
+    shapeParams.width = toMm(toNumber(g("rect-width").value), displayUnit);
+    shapeParams.height = toMm(toNumber(g("rect-height").value), displayUnit);
+    shapeParams.cornerRadius = 0;
+  } else if (shape === ShapeType.RECTANGLE) {
     shapeParams.width = toMm(toNumber(g("rect-width").value), displayUnit);
     shapeParams.height = toMm(toNumber(g("rect-height").value), displayUnit);
     const cornerEl = g("rounded-corner-radius");
@@ -939,6 +1094,14 @@ function readInputsFromForm() {
     shapeParams.boltHoleDepth = Number.isFinite(totalD) && Number.isFinite(shapeParams.counterboreDepth)
       ? Math.max(0, totalD - shapeParams.counterboreDepth)
       : 0;
+  } else if (shape === ShapeType.THREAD_MILLING) {
+    shapeParams.majorDiameter = toMm(toNumber(g("thread-major-diameter")?.value), displayUnit);
+    shapeParams.pitch = toMm(toNumber(g("thread-pitch")?.value), displayUnit);
+    shapeParams.holeDiameter = toMm(toNumber(g("thread-hole-diameter")?.value), displayUnit);
+    shapeParams.threadDepth = toMm(toNumber(g("thread-milling-depth")?.value), displayUnit);
+    shapeParams.threadSystem = g("thread-system")?.value || "metric";
+    shapeParams.threadPreset = g("thread-preset")?.value || "";
+    shapeParams.threadMillType = g("thread-mill-type")?.value || ThreadMillType.INTERNAL;
   } else if (shape === ShapeType.PATTERNED_HOLES) {
     shapeParams.diameter = toMm(toNumber(g("patterned-holes-diameter")?.value), displayUnit);
     shapeParams.spacingX = toMm(toNumber(g("patterned-holes-spacing-x")?.value), displayUnit);
@@ -961,14 +1124,23 @@ function readInputsFromForm() {
     ? (/** @type {HTMLSelectElement} */ (g("letter-mode"))?.value || "outline")
     : "outline";
 
-  // Bij letters outline vragen we geen freesdikte; gebruik vaste kolom 0,5 mm
-  const toolDiameter = (shape === ShapeType.LETTERS && letterMode === "outline")
-    ? 0.5
+  const contourType = /** @type {HTMLSelectElement} */ (
+    g("contour-type")
+  )?.value;
+
+  // Bij letters outline of DXF-gravering: vaste freesdiameter (pad wordt niet geoffset)
+  const engravingToolD = getEngravingToolDiameterMm(shape, contourType, letterMode);
+  const toolDiameter = engravingToolD != null
+    ? engravingToolD
     : toMm(toNumber(g("tool-diameter").value), displayUnit);
   let totalDepth = toMm(toNumber(g("total-depth").value), displayUnit);
   const multipleDepths = /** @type {HTMLInputElement} */ (g("multiple-depths"))?.checked ?? false;
   let stepdown = multipleDepths ? toMm(toNumber(g("stepdown").value), displayUnit) : totalDepth;
   if (shape === ShapeType.COUNTERBORE_BOLT && !multipleDepths) {
+    stepdown = totalDepth;
+  }
+  if (shape === ShapeType.THREAD_MILLING && Number.isFinite(shapeParams.threadDepth)) {
+    totalDepth = shapeParams.threadDepth;
     stepdown = totalDepth;
   }
   const isSimpleMode = getDisplayMode() === "simple";
@@ -1009,7 +1181,9 @@ function readInputsFromForm() {
   const mirrorYEnabled = isSimpleMode ? false : (/** @type {HTMLInputElement} */ (g("mirror-y-enabled"))?.checked ?? false);
   const useArcsEnabled = /** @type {HTMLInputElement} */ (g("use-arcs-enabled"))?.checked ?? false;
 
-  const finishingPassSupported = operation === OperationType.POCKET || operation === OperationType.CONTOUR;
+  const finishingPassSupported = (operation === OperationType.POCKET || operation === OperationType.CONTOUR)
+    && shape !== ShapeType.THREAD_MILLING
+    && !isEngravingContourMode(shape, contourType, letterMode);
   const finishingPassEnabled = isSimpleMode
     ? false
     : (finishingPassSupported && ((/** @type {HTMLInputElement} */ (g("finishing-pass-enabled"))?.checked ?? false)));
@@ -1051,7 +1225,12 @@ function readInputsFromForm() {
     originOffsetX: isSimpleMode ? 0 : toMm(toNumber(g("origin-offset-x")?.value) || 0, displayUnit),
     originOffsetY: isSimpleMode ? 0 : toMm(toNumber(g("origin-offset-y")?.value) || 0, displayUnit),
   };
-  const entryMethod = isSimpleMode ? EntryMethod.PLUNGE : (/** @type {HTMLInputElement} */ (g("entry-method"))?.value);
+  const entryMethod = effectiveEntryMethod(
+    shape,
+    contourType,
+    letterMode,
+    isSimpleMode ? EntryMethod.PLUNGE : (/** @type {HTMLInputElement} */ (g("entry-method"))?.value)
+  );
 
   const rampAngle = toNumber(g("ramp-angle").value);
 
@@ -1062,11 +1241,9 @@ function readInputsFromForm() {
   const facingMode = facingModeRaw === "within" ? "within" : "full";
   const facingDirectionRaw = isSimpleMode ? "x" : ((/** @type {HTMLSelectElement} */ (g("facing-direction")))?.value?.trim?.() ?? "");
   const facingDirection = facingDirectionRaw === "y" ? "y" : "x";
+  const facingFinishModeRaw = isSimpleMode ? "off" : ((/** @type {HTMLSelectElement} */ (g("facing-finish-mode")))?.value?.trim?.() ?? "");
+  const facingFinishMode = facingFinishModeRaw === "cross" || facingFinishModeRaw === "perimeter" ? facingFinishModeRaw : "off";
   const facingEvenSpacing = isSimpleMode ? false : ((/** @type {HTMLInputElement} */ (g("facing-even-spacing")))?.checked ?? false);
-
-  const contourType = /** @type {HTMLSelectElement} */ (
-    g("contour-type")
-  )?.value;
 
   const tabsEnabled = /** @type {HTMLInputElement} */ (
     g("tabs-enabled")
@@ -1100,9 +1277,10 @@ function readInputsFromForm() {
     operation,
     shapeParams,
     letterMode,
-    contourType: contourType === "inside" ? "inside" : "outside",
+    contourType: normalizeContourType(contourType),
     facingMode,
     facingDirection,
+    facingFinishMode,
     facingEvenSpacing,
     cutParams: {
       ...cutParams,
@@ -1130,7 +1308,7 @@ function getParamsSnapshotReadOnly() {
   const isSimple = getDisplayMode() === "simple";
 
   const opCat = el("operation-type")?.value ?? OperationTypeCategory.SHAPES;
-  const shape = opCat === OperationTypeCategory.SHAPES ? el("shape")?.value : opCat;
+  const shape = resolveEffectiveShape(opCat, el("shape")?.value);
   const opRaw = el("operation")?.value;
   const operation = (shape === ShapeType.FACING ? OperationType.FACING : shape === ShapeType.PATTERNED_HOLES ? OperationType.POCKET : opRaw);
 
@@ -1139,21 +1317,28 @@ function getParamsSnapshotReadOnly() {
   const vm = (id) => toMm(v(id), displayUnit);
   if (shape === ShapeType.CIRCLE) sp.diameter = vm("circle-diameter");
   else if (shape === ShapeType.SQUARE) { sp.size = vm("square-size"); sp.cornerRadius = Math.max(0, vm("rounded-corner-radius") || 0); }
-  else if (shape === ShapeType.RECTANGLE || shape === ShapeType.FACING) { sp.width = vm("rect-width"); sp.height = vm("rect-height"); sp.cornerRadius = Math.max(0, vm("rounded-corner-radius") || 0); }
+  else if (shape === ShapeType.FACING) { sp.width = vm("rect-width"); sp.height = vm("rect-height"); sp.cornerRadius = 0; }
+  else if (shape === ShapeType.RECTANGLE) { sp.width = vm("rect-width"); sp.height = vm("rect-height"); sp.cornerRadius = Math.max(0, vm("rounded-corner-radius") || 0); }
   else if (shape === ShapeType.ELLIPSE) { sp.major = vm("ellipse-major"); sp.minor = vm("ellipse-minor"); }
   else if (shape === ShapeType.HEXAGON) sp.height = vm("hexagon-height");
   else if (shape === ShapeType.LETTERS) { sp.text = el("letter-text")?.value || ""; sp.fontSize = vm("letter-size") || 10; sp.letterOrientation = v("letter-orientation") || 0; }
   else if (shape === ShapeType.COUNTERBORE_BOLT) { sp.headDiameter = vm("counterbore-head-diameter"); sp.counterboreDepth = vm("counterbore-depth"); sp.boltDiameter = vm("counterbore-bolt-diameter"); const td = vm("total-depth"); sp.boltHoleDepth = Math.max(0, (td || 0) - (sp.counterboreDepth || 0)); }
+  else if (shape === ShapeType.THREAD_MILLING) { sp.majorDiameter = vm("thread-major-diameter"); sp.pitch = vm("thread-pitch"); sp.holeDiameter = vm("thread-hole-diameter"); sp.threadDepth = vm("thread-milling-depth"); sp.threadSystem = el("thread-system")?.value || "metric"; sp.threadPreset = el("thread-preset")?.value || ""; sp.threadMillType = el("thread-mill-type")?.value || ThreadMillType.INTERNAL; }
   else if (shape === ShapeType.PATTERNED_HOLES) { sp.diameter = vm("patterned-holes-diameter"); sp.spacingX = vm("patterned-holes-spacing-x"); sp.spacingY = vm("patterned-holes-spacing-y"); sp.countX = Math.max(1, Math.floor(v("patterned-holes-count-x") || 1)); sp.countY = Math.max(1, Math.floor(v("patterned-holes-count-y") || 1)); }
   else if (shape === ShapeType.CIRCULAR_PATTERN_HOLES) { sp.count = Math.max(1, Math.floor(v("circular-pattern-holes-count") || 6)); sp.diameter = vm("circular-pattern-holes-diameter"); sp.circleDiameter = vm("circular-pattern-holes-circle-diameter"); sp.startAngle = Math.max(0, Math.min(360, v("circular-pattern-holes-start-angle") || 0)); sp.holeInCenter = el("circular-pattern-holes-center-hole")?.checked ?? false; sp.centerHoleDiameter = sp.holeInCenter ? vm("circular-pattern-holes-center-diameter") : 0; }
   else if (shape === ShapeType.DXF) { sp.type = "dxf"; sp.dxfOrientation = v("dxf-orientation") || 0; }
 
   const letterMode = shape === ShapeType.LETTERS ? (el("letter-mode")?.value || "outline") : "outline";
-  const toolD = (shape === ShapeType.LETTERS && letterMode === "outline") ? 0.5 : vm("tool-diameter");
-  const totalD = vm("total-depth");
+  const contourType = normalizeContourType(el("contour-type")?.value);
+  const toolD = (() => {
+    const fixed = getEngravingToolDiameterMm(shape, contourType, letterMode);
+    return fixed != null ? fixed : vm("tool-diameter");
+  })();
+  let totalD = vm("total-depth");
   const multDep = el("multiple-depths")?.checked ?? false;
   let stepdown = multDep ? vm("stepdown") : totalD;
   if (shape === ShapeType.COUNTERBORE_BOLT && !multDep) stepdown = totalD;
+  if (shape === ShapeType.THREAD_MILLING && Number.isFinite(sp.threadDepth)) { totalD = sp.threadDepth; stepdown = totalD; }
 
   let stepoverMm;
   if (isSimple) {
@@ -1171,7 +1356,9 @@ function getParamsSnapshotReadOnly() {
     stepoverMm = Math.min(stepoverMm, Number.isFinite(toolD) ? toolD : stepoverMm);
   }
 
-  const finishingPassSupported = operation === OperationType.POCKET || operation === OperationType.CONTOUR;
+  const finishingPassSupported = (operation === OperationType.POCKET || operation === OperationType.CONTOUR)
+    && shape !== ShapeType.THREAD_MILLING
+    && !isEngravingContourMode(shape, contourType, letterMode);
   const finPassEnabled = isSimple ? false : (finishingPassSupported && (el("finishing-pass-enabled")?.checked ?? false));
   const finPassDist = finPassEnabled ? (vm("finishing-pass-distance") || 0) : 0;
   const finPassSpeedOverridePct = finPassEnabled ? (v("finishing-pass-speed-override") || 100) : 100;
@@ -1211,14 +1398,15 @@ function getParamsSnapshotReadOnly() {
   const plunge = isSimple ? false : ((operation === OperationType.POCKET || operation === OperationType.FACING || shape === ShapeType.DXF) ? false : plungeRaw === "on");
   const facing = (el("facing-mode")?.value?.trim?.() ?? "") === "within" ? "within" : "full";
   const facingDir = isSimple ? "x" : ((el("facing-direction")?.value?.trim?.() ?? "") === "y" ? "y" : "x");
+  const facingFinishRaw = isSimple ? "off" : (el("facing-finish-mode")?.value?.trim?.() ?? "");
+  const facingFinishMode = facingFinishRaw === "cross" || facingFinishRaw === "perimeter" ? facingFinishRaw : "off";
   const facingEven = isSimple ? false : (el("facing-even-spacing")?.checked ?? false);
-  const contour = el("contour-type")?.value === "inside" ? "inside" : "outside";
   const tabsEn = el("tabs-enabled")?.checked ?? false;
   const tabs = { enabled: tabsEn, interval: vm("tab-interval"), width: vm("tab-width"), height: vm("tab-height") };
-  const entry = isSimple ? EntryMethod.PLUNGE : (el("entry-method")?.value || EntryMethod.PLUNGE);
+  const entry = effectiveEntryMethod(shape, contourType, letterMode, isSimple ? EntryMethod.PLUNGE : (el("entry-method")?.value || EntryMethod.PLUNGE));
   const ramp = v("ramp-angle") || 3;
 
-  const snap = { shape, operation, shapeParams: sp, letterMode, contourType: contour, facingMode: facing, facingDirection: facingDir, facingEvenSpacing: facingEven, plungeOutside: plunge, cutParams: { ...cp, entryMethod: entry, rampAngleMax: ramp }, originParams: op, tabs };
+  const snap = { shape, operation, shapeParams: sp, letterMode, contourType, facingMode: facing, facingDirection: facingDir, facingFinishMode, facingEvenSpacing: facingEven, plungeOutside: plunge, cutParams: { ...cp, entryMethod: entry, rampAngleMax: ramp }, originParams: op, tabs };
   if (shape === ShapeType.DXF) {
     const f = el("dxf-file");
     const file = f?.files?.[0];
@@ -1230,7 +1418,7 @@ function getParamsSnapshotReadOnly() {
 const NUM_TOL = 1e-6;
 function paramsSnapshotsEqual(a, b) {
   if (!a || !b) return a === b;
-  if (a.shape !== b.shape || a.operation !== b.operation || a.letterMode !== b.letterMode || a.contourType !== b.contourType || a.facingMode !== b.facingMode || a.facingDirection !== b.facingDirection || a.facingEvenSpacing !== b.facingEvenSpacing || a.plungeOutside !== b.plungeOutside) return false;
+  if (a.shape !== b.shape || a.operation !== b.operation || a.letterMode !== b.letterMode || a.contourType !== b.contourType || a.facingMode !== b.facingMode || a.facingDirection !== b.facingDirection || a.facingFinishMode !== b.facingFinishMode || a.facingEvenSpacing !== b.facingEvenSpacing || a.plungeOutside !== b.plungeOutside) return false;
   function eq(x, y) {
     if (typeof x === "number" && typeof y === "number") return Math.abs(x - y) < NUM_TOL;
     return x === y;
@@ -1269,14 +1457,13 @@ function validateInputs(raw) {
     }
   }
 
-  const isLettersOutline =
-    raw.shape === ShapeType.LETTERS && (raw.letterMode || "outline") === "outline";
-  if (!isLettersOutline) {
+  const isEngravingNoToolD = isEngravingContourMode(raw.shape, raw.contourType, raw.letterMode);
+  if (!isEngravingNoToolD) {
     assertPositive(cp.toolDiameter, "field.toolDiameter");
   }
   assertPositive(cp.totalDepth, "field.totalDepth");
   assertPositive(cp.stepdown, "field.stepdown");
-  if (!isLettersOutline) {
+  if (!isEngravingNoToolD && raw.shape !== ShapeType.THREAD_MILLING) {
     assertPositive(cp.stepover, "field.stepover");
   }
   assertPositive(cp.feedrate, "field.feedrate");
@@ -1290,7 +1477,8 @@ function validateInputs(raw) {
   }
 
   if (
-    !isLettersOutline &&
+    !isEngravingNoToolD &&
+    raw.shape !== ShapeType.THREAD_MILLING &&
     Number.isFinite(cp.toolDiameter) &&
     cp.stepover > cp.toolDiameter
   ) {
@@ -1310,7 +1498,7 @@ function validateInputs(raw) {
     }
   }
 
-  if (raw.cutParams.entryMethod === EntryMethod.RAMP) {
+  if (!isEngravingContourMode(raw.shape, raw.contourType, raw.letterMode) && raw.cutParams.entryMethod === EntryMethod.RAMP) {
     assertPositive(raw.cutParams.rampAngleMax, "field.rampAngle");
   }
 
@@ -1361,6 +1549,13 @@ function validateInputs(raw) {
       }
       break;
     }
+    case ShapeType.THREAD_MILLING: {
+      assertPositive(sp.majorDiameter, "field.threadMajorDiameter");
+      assertPositive(sp.pitch, "field.threadPitch");
+      assertPositive(sp.holeDiameter, "field.threadHoleDiameter");
+      assertPositive(sp.threadDepth, "field.threadMillingDepth");
+      break;
+    }
     case ShapeType.PATTERNED_HOLES: {
       assertPositive(sp.diameter, "field.patternedHolesDiameter");
       assertPositive(sp.spacingX, "field.patternedHolesSpacingX");
@@ -1404,6 +1599,7 @@ function validateInputs(raw) {
   if (
     raw.shape !== ShapeType.LETTERS &&
     raw.shape !== ShapeType.COUNTERBORE_BOLT &&
+    raw.shape !== ShapeType.THREAD_MILLING &&
     raw.shape !== ShapeType.DXF &&
     isPocketOrInsideContour &&
     Number.isFinite(toolD) &&
@@ -1426,6 +1622,26 @@ function validateInputs(raw) {
       errors.push(t("error.pocketSmallerThanTool"));
     }
   }
+  if (raw.shape === ShapeType.THREAD_MILLING && Number.isFinite(toolD) && toolD > 0) {
+    const eps = 1e-6;
+    const isExternal = sp.threadMillType === ThreadMillType.EXTERNAL;
+    if (!isExternal) {
+      if (Number.isFinite(sp.holeDiameter) && toolD >= sp.holeDiameter - eps) {
+        errors.push(t("error.threadToolLargerThanHole"));
+      }
+      if (Number.isFinite(sp.majorDiameter) && toolD >= sp.majorDiameter - eps) {
+        errors.push(t("error.threadToolTooLarge"));
+      }
+    }
+    const pathRadius = getThreadMillingFinishRadius(
+      sp.majorDiameter,
+      toolD,
+      sp.threadMillType || ThreadMillType.INTERNAL
+    );
+    if (pathRadius <= eps) {
+      errors.push(isExternal ? t("error.threadToolTooLargeExternal") : t("error.threadToolTooLarge"));
+    }
+  }
 
   if ((raw.operation === OperationType.FACING || raw.shape === ShapeType.FACING) &&
       Number.isFinite(toolD) &&
@@ -1440,7 +1656,7 @@ function validateInputs(raw) {
     }
   }
 
-  if ((raw.shape === ShapeType.SQUARE || raw.shape === ShapeType.RECTANGLE || raw.shape === ShapeType.FACING) &&
+  if ((raw.shape === ShapeType.SQUARE || raw.shape === ShapeType.RECTANGLE) &&
       Number.isFinite(sp.cornerRadius) &&
       sp.cornerRadius > 0) {
     const hw = raw.shape === ShapeType.SQUARE ? sp.size / 2 : sp.width / 2;
@@ -2325,8 +2541,141 @@ function roundedRectYBoundsAtX(hw, hh, r, x) {
 }
 
 /**
+ * Normaliseert facing-finish instelling naar een geldige enum-waarde.
+ * @param {string} mode
+ * @returns {"off"|"cross"|"perimeter"}
+ */
+function normalizeFacingFinishMode(mode) {
+  const normalized = String(mode || "").toLowerCase().trim();
+  if (normalized === "cross" || normalized === "perimeter") return normalized;
+  return "off";
+}
+
+/**
+ * Berekent effectieve half-dimensies/radius voor facing rekening houdend met within/full.
+ * @param {string} shape
+ * @param {{ size?: number, width?: number, height?: number, cornerRadius?: number }} shapeParams
+ * @param {number} toolRadius
+ * @param {string} facingMode
+ * @returns {{ hwEff:number, hhEff:number, rEff:number } | null}
+ */
+/**
+ * Werkelijke stepover bij gelijkmatige facing-verdeling (≤ ingestelde stepover).
+ * @param {number} limit - hwEff of hhEff (halve zijde in stepover-richting)
+ * @param {number} maxStepover
+ * @returns {number|null}
+ */
+function computeEvenFacingStepover(limit, maxStepover) {
+  if (!(Number.isFinite(limit) && limit > 0)) return null;
+  if (!(Number.isFinite(maxStepover) && maxStepover > 0)) return null;
+  const span = 2 * limit;
+  const intervals = Math.max(1, Math.ceil(span / maxStepover));
+  return span / intervals;
+}
+
+function getFacingEffectiveGeometry(shape, shapeParams, toolRadius, facingMode) {
+  const hw = (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.width) / 2;
+  const hh = (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.height) / 2;
+  const r = 0;
+  const isWithin = String(facingMode).toLowerCase().trim() === "within";
+  const hwEff = isWithin ? hw - toolRadius : hw;
+  const hhEff = isWithin ? hh - toolRadius : hh;
+  const rEff = Math.max(0, isWithin ? r - toolRadius : r);
+  if (hwEff <= 0 || hhEff <= 0) return null;
+  return { hwEff, hhEff, rEff };
+}
+
+/**
+ * Maakt 1 gesloten perimeter-pad voor facing-finish.
+ * @param {string} shape
+ * @param {{ size?: number, width?: number, height?: number, cornerRadius?: number }} shapeParams
+ * @param {number} toolRadius
+ * @param {string} facingMode
+ * @returns {{x:number,y:number,z:number}[]}
+ */
+function generateFacingPerimeterPath(shape, shapeParams, toolRadius, facingMode) {
+  const geom = getFacingEffectiveGeometry(shape, shapeParams, toolRadius, facingMode);
+  if (!geom) return [];
+  return generateRoundedRectPoints(geom.hwEff, geom.hhEff, geom.rEff);
+}
+
+/**
+ * Geeft het laatste punt van de laatste niet-lege path.
+ * @param {{x:number,y:number,z:number}[][]} paths
+ * @returns {{x:number,y:number,z:number}|null}
+ */
+function getLastPointFromPaths(paths) {
+  if (!paths || !paths.length) return null;
+  for (let i = paths.length - 1; i >= 0; i--) {
+    const path = paths[i];
+    if (path && path.length) return path[path.length - 1];
+  }
+  return null;
+}
+
+/**
+ * Oriënteert open paden zodat elk pad start dichtbij het eindpunt van het vorige.
+ * @param {{x:number,y:number,z:number}[][]} paths
+ * @param {{x:number,y:number,z:number}|null} referencePoint
+ * @returns {{x:number,y:number,z:number}[][]}
+ */
+function orientOpenPathsFromReference(paths, referencePoint) {
+  if (!paths || !paths.length || !referencePoint) return paths || [];
+  /** @type {{x:number,y:number,z:number}[][]} */
+  const oriented = [];
+  let prev = referencePoint;
+  for (const path of paths) {
+    if (!path || path.length < 2) {
+      if (path && path.length) {
+        oriented.push(path);
+        prev = path[path.length - 1];
+      }
+      continue;
+    }
+    const first = path[0];
+    const last = path[path.length - 1];
+    const dFirst = Math.hypot(first.x - prev.x, first.y - prev.y);
+    const dLast = Math.hypot(last.x - prev.x, last.y - prev.y);
+    if (dLast < dFirst) {
+      const reversed = path.slice().reverse();
+      oriented.push(reversed);
+      prev = reversed[reversed.length - 1];
+    } else {
+      oriented.push(path);
+      prev = path[path.length - 1];
+    }
+  }
+  return oriented;
+}
+
+/**
+ * Verplaatst startpunt van een gesloten pad naar het punt het dichtst bij referentie.
+ * @param {{x:number,y:number,z:number}[]} path
+ * @param {{x:number,y:number,z:number}|null} referencePoint
+ * @returns {{x:number,y:number,z:number}[]}
+ */
+function rotateClosedPathStartNear(path, referencePoint) {
+  if (!path || path.length < 3 || !referencePoint) return path || [];
+  const isClosed = Math.abs(path[0].x - path[path.length - 1].x) < 1e-9 && Math.abs(path[0].y - path[path.length - 1].y) < 1e-9;
+  const open = isClosed ? path.slice(0, -1) : path.slice();
+  if (open.length < 2) return path;
+  let bestIdx = 0;
+  let bestDist = Infinity;
+  for (let i = 0; i < open.length; i++) {
+    const p = open[i];
+    const d = Math.hypot(p.x - referencePoint.x, p.y - referencePoint.y);
+    if (d < bestDist) {
+      bestDist = d;
+      bestIdx = i;
+    }
+  }
+  const rotated = open.slice(bestIdx).concat(open.slice(0, bestIdx));
+  rotated.push({ ...rotated[0] });
+  return rotated;
+}
+
+/**
  * Facing-paden: parallelle strips (rechthoekig gebied vlakfrezen).
- * Ondersteunt afgeronde hoeken via shapeParams.cornerRadius.
  * @param {string} shape - ShapeType.SQUARE of RECTANGLE
  * @param {{ size?: number, width?: number, height?: number, cornerRadius?: number }} shapeParams
  * @param {number} stepover
@@ -2337,17 +2686,11 @@ function roundedRectYBoundsAtX(hw, hh, r, x) {
  * @returns {{x:number,y:number,z:number}[][]}
  */
 function generateFacingPaths(shape, shapeParams, stepover, toolRadius, facingMode, facingDirection, facingEvenSpacing) {
-  const hw = (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.width) / 2;
-  const hh = (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.height) / 2;
-  const userR = Number.isFinite(shapeParams.cornerRadius) ? shapeParams.cornerRadius : 0;
-  const r = Math.min(userR, hw, hh);
-  const isWithin = String(facingMode).toLowerCase().trim() === "within";
+  const geom = getFacingEffectiveGeometry(shape, shapeParams, toolRadius, facingMode);
   const dir = String(facingDirection || "x").toLowerCase().trim() === "y" ? "y" : "x";
   const evenSpacing = !!facingEvenSpacing;
-  const hwEff = isWithin ? hw - toolRadius : hw;
-  const hhEff = isWithin ? hh - toolRadius : hh;
-  const rEff = Math.max(0, isWithin ? r - toolRadius : r);
-  if (hwEff <= 0 || hhEff <= 0) return [];
+  if (!geom) return [];
+  const { hwEff, hhEff, rEff } = geom;
 
   /**
    * Genereert sweep-posities van -limit tot +limit en forceert altijd een eindpass op +limit.
@@ -2420,6 +2763,81 @@ function generateFacingPaths(shape, shapeParams, stepover, toolRadius, facingMod
     }
   }
   return paths;
+}
+
+/**
+ * Berekent een compacte helix-ramp op het strip-startpunt voor facing.
+ * Houdt bij modus "within" de helix binnen het effectieve werkvlak.
+ * @param {{x:number,y:number}} start
+ * @param {{x:number,y:number,z:number}[]} path
+ * @param {number} toolDiameter
+ * @param {{ hw:number, hh:number, within:boolean } | null | undefined} bounds
+ * @returns {{ cx:number, cy:number, helixR:number, startAngle:number }}
+ */
+function computeFacingStripHelixPlacement(start, path, toolDiameter, bounds) {
+  const toolR = (toolDiameter || 6) / 2;
+  let helixR = Math.max(1.0, Math.min(2.5, toolR * 0.7));
+
+  const dx = path.length >= 2 ? path[1].x - path[0].x : 1;
+  const dy = path.length >= 2 ? path[1].y - path[0].y : 0;
+  const segLen = Math.hypot(dx, dy);
+  const dirX = segLen > 1e-9 ? dx / segLen : 1;
+  const dirY = segLen > 1e-9 ? dy / segLen : 0;
+
+  function inwardNormal() {
+    let nx = dirX;
+    let ny = dirY;
+    if (bounds && bounds.within) {
+      let tx = -start.x;
+      let ty = -start.y;
+      const tl = Math.hypot(tx, ty);
+      if (tl > 1e-9) {
+        tx /= tl;
+        ty /= tl;
+        nx += tx;
+        ny += ty;
+      }
+      const { hw, hh } = bounds;
+      if (Math.abs(start.x + hw) < 1e-4) nx += 1;
+      if (Math.abs(start.x - hw) < 1e-4) nx -= 1;
+      if (Math.abs(start.y + hh) < 1e-4) ny += 1;
+      if (Math.abs(start.y - hh) < 1e-4) ny -= 1;
+    }
+    const nl = Math.hypot(nx, ny);
+    if (nl > 1e-9) return { x: nx / nl, y: ny / nl };
+    return { x: dirX, y: dirY };
+  }
+
+  function circleFitsRect(cx, cy, R, hw, hh) {
+    const eps = 1e-6;
+    return cx - R >= -hw - eps && cx + R <= hw + eps && cy - R >= -hh - eps && cy + R <= hh + eps;
+  }
+
+  function placementForRadius(R) {
+    const n = inwardNormal();
+    const cx = start.x + n.x * R;
+    const cy = start.y + n.y * R;
+    return { cx, cy, startAngle: Math.atan2(start.y - cy, start.x - cx) };
+  }
+
+  if (bounds && bounds.within) {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const { cx, cy, startAngle } = placementForRadius(helixR);
+      if (circleFitsRect(cx, cy, helixR, bounds.hw, bounds.hh)) {
+        return { cx, cy, helixR, startAngle };
+      }
+      helixR *= 0.85;
+      if (helixR < 0.8) break;
+    }
+    helixR = Math.max(0.8, helixR);
+    const n = inwardNormal();
+    const cx = Math.max(-bounds.hw + helixR, Math.min(bounds.hw - helixR, start.x + n.x * helixR));
+    const cy = Math.max(-bounds.hh + helixR, Math.min(bounds.hh - helixR, start.y + n.y * helixR));
+    return { cx, cy, helixR, startAngle: Math.atan2(start.y - cy, start.x - cx) };
+  }
+
+  const { cx, cy, startAngle } = placementForRadius(helixR);
+  return { cx, cy, helixR, startAngle };
 }
 
 /**
@@ -2605,9 +3023,12 @@ function computeOriginShift(
     shiftX = -(minX + maxX) / 2;
     shiftY = -(minY + maxY) / 2;
   }
+  // Positive "offset from origin" moves the toolpath opposite to +X/+Y (e.g. +25 X → 25 mm left).
+  const offsetX = Number.isFinite(originParams.originOffsetX) ? originParams.originOffsetX : 0;
+  const offsetY = Number.isFinite(originParams.originOffsetY) ? originParams.originOffsetY : 0;
   return {
-    shiftX: shiftX - (Number.isFinite(originParams.originOffsetX) ? originParams.originOffsetX : 0),
-    shiftY: shiftY - (Number.isFinite(originParams.originOffsetY) ? originParams.originOffsetY : 0),
+    shiftX: shiftX - offsetX,
+    shiftY: shiftY - offsetY,
     zOffset: originParams.zOffset || 0,
     zOriginMode: originParams.zOrigin || ZOrigin.STOCK_TOP,
   };
@@ -2755,6 +3176,36 @@ function getResultShapePathsRaw(params) {
     return null;
   }
 
+  if (shape === ShapeType.THREAD_MILLING) {
+    const majorR = shapeParams.majorDiameter / 2;
+    const majorSegs = segmentsForCircleRadius(majorR);
+    const majorPath = [];
+    for (let i = 0; i <= majorSegs; i++) {
+      const t = (i / majorSegs) * 2 * Math.PI;
+      majorPath.push({ x: majorR * Math.cos(t), y: majorR * Math.sin(t), z: 0 });
+    }
+    const isExternal = shapeParams.threadMillType === ThreadMillType.EXTERNAL;
+    if (isExternal) {
+      const minorDia = Math.max(0, externalThreadMinorDiameter(shapeParams.majorDiameter, shapeParams.pitch));
+      const minorR = minorDia / 2;
+      const minorSegs = segmentsForCircleRadius(Math.max(minorR, 1e-6));
+      const minorPath = [];
+      for (let i = 0; i <= minorSegs; i++) {
+        const t = (i / minorSegs) * 2 * Math.PI;
+        minorPath.push({ x: minorR * Math.cos(t), y: minorR * Math.sin(t), z: 0 });
+      }
+      return { paths: [minorPath, majorPath], totalDepth, bottomZ };
+    }
+    const holeR = shapeParams.holeDiameter / 2;
+    const holeSegs = segmentsForCircleRadius(holeR);
+    const holePath = [];
+    for (let i = 0; i <= holeSegs; i++) {
+      const t = (i / holeSegs) * 2 * Math.PI;
+      holePath.push({ x: holeR * Math.cos(t), y: holeR * Math.sin(t), z: 0 });
+    }
+    return { paths: [holePath, majorPath], totalDepth, bottomZ };
+  }
+
   if (shape === ShapeType.PATTERNED_HOLES && operation === OperationType.POCKET) {
     const countX = Math.max(1, shapeParams.countX || 1);
     const countY = Math.max(1, shapeParams.countY || 1);
@@ -2813,7 +3264,7 @@ function getResultShapePathsRaw(params) {
     const h = shape === ShapeType.FACING ? shapeParams.height : (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.height);
     const hw = w / 2;
     const hh = h / 2;
-    const r = Number.isFinite(shapeParams.cornerRadius) ? shapeParams.cornerRadius : 0;
+    const r = shape === ShapeType.FACING ? 0 : (Number.isFinite(shapeParams.cornerRadius) ? shapeParams.cornerRadius : 0);
     paths.push(generateRoundedRectPoints(hw, hh, r));
     return { paths, totalDepth, bottomZ };
   }
@@ -2869,7 +3320,7 @@ function generateToolpath(params) {
     if (orientationDeg !== 0) {
       letterPaths = rotatePathsAroundOrigin(letterPaths, orientationDeg);
     }
-    const entryMethod = cutParams.entryMethod;
+    const entryMethod = effectiveEntryMethod(shape, params.contourType, params.letterMode, cutParams.entryMethod);
     const safeZ = cutParams.safeHeight;
 
     if (letterMode === "pocket") {
@@ -2993,7 +3444,7 @@ function generateToolpath(params) {
   if (shape === ShapeType.DXF) {
     const dxfContours = params.dxfContours;
     if (!dxfContours || dxfContours.length === 0) return { moves: [] };
-    const entryMethod = cutParams.entryMethod;
+    const entryMethod = effectiveEntryMethod(shape, params.contourType, params.letterMode, cutParams.entryMethod);
     const safeZ = cutParams.safeHeight;
 
     if (operation === OperationType.POCKET) {
@@ -3070,11 +3521,43 @@ function generateToolpath(params) {
     } else {
       let contourPath = null;
       let tabConfig = null;
-      const contourType = params.contourType === "inside" ? "inside" : "outside";
-      if (dxfContours.length > 1 && contourType === "inside") {
+      const contourType = normalizeContourType(params.contourType);
+      if (contourType === "engraving") {
+        depths.forEach((depthZ) => {
+          dxfContours.forEach((path, idx) => {
+            if (!path || path.length < 2) return;
+            if (idx > 0) {
+              const last = moves[moves.length - 1];
+              if (last && last.z < safeZ - 1e-6) moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
+            }
+            const closed = path.length >= 3 &&
+              Math.hypot(path[path.length - 1].x - path[0].x, path[path.length - 1].y - path[0].y) < 1e-6;
+            addLayerForPath(
+              moves,
+              path,
+              depthZ,
+              cutParams,
+              false,
+              entryMethod,
+              idx === 0,
+              safeZ,
+              undefined,
+              false,
+              false,
+              0,
+              true,
+              undefined,
+              undefined,
+              undefined,
+              true,
+              false,
+              !closed
+            );
+          });
+        });
+      } else if (dxfContours.length > 1 && contourType === "inside") {
         throw new Error(t("error.dxfMultipleContoursInside"));
-      }
-      if (dxfContours.length === 1) {
+      } else if (dxfContours.length === 1) {
         const path = dxfContours[0];
         const offset = contourType === "inside" ? toolRadius : -toolRadius;
         const debug = {};
@@ -3126,17 +3609,30 @@ function generateToolpath(params) {
       if (last.z < safeZ - 1e-6) moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
     }
     const resultRaw = getResultShapePathsRaw(params);
-    const shift = computeOriginShift(moves, originParams, cutParams.totalDepth, 0, operation, operation === OperationType.POCKET ? "inside" : (params.contourType === "inside" ? "inside" : "outside"), undefined, true);
-    applyOriginTransform(moves, originParams, cutParams.totalDepth, 0, operation, operation === OperationType.POCKET ? "inside" : (params.contourType === "inside" ? "inside" : "outside"), undefined, true);
+    const dxfContourOrigin = operation === OperationType.POCKET
+      ? "inside"
+      : (normalizeContourType(params.contourType) === "inside" ? "inside" : "outside");
+    const shift = computeOriginShift(moves, originParams, cutParams.totalDepth, 0, operation, dxfContourOrigin, undefined, true);
+    applyOriginTransform(moves, originParams, cutParams.totalDepth, 0, operation, dxfContourOrigin, undefined, true);
     if (resultRaw && resultRaw.paths.length > 0) {
       resultRaw.paths.forEach((path) => {
         applyOriginTransformToPoints(path, shift.shiftX, shift.shiftY, shift.zOffset, shift.zOriginMode, cutParams.totalDepth);
       });
+      const isDxfEngraving = normalizeContourType(params.contourType) === "engraving";
       const resultContourInside = operation === OperationType.POCKET || (operation === OperationType.CONTOUR && params.contourType === "inside");
       const resultBounds = computeBoundsFromPaths(resultRaw.paths);
-      return { moves, resultPaths: resultRaw.paths, resultTotalDepth: resultRaw.totalDepth, resultBottomZ: resultRaw.bottomZ, resultContourInside, resultBounds, toolDiameter: cutParams.toolDiameter };
+      return {
+        moves,
+        resultPaths: resultRaw.paths,
+        resultTotalDepth: resultRaw.totalDepth,
+        resultBottomZ: resultRaw.bottomZ,
+        resultContourInside,
+        resultBounds,
+        toolDiameter: isDxfEngraving ? 0 : cutParams.toolDiameter,
+      };
     }
-    return { moves, toolDiameter: cutParams.toolDiameter };
+    const isDxfEngraving = normalizeContourType(params.contourType) === "engraving";
+    return { moves, toolDiameter: isDxfEngraving ? 0 : cutParams.toolDiameter };
   }
 
   // Bout met verzonken kop: eerst verzinking (kop-gat), dan boutgat
@@ -3315,6 +3811,139 @@ function generateToolpath(params) {
     return { moves, resultPathsWithDepth, resultTotalDepth: totalDepth, resultBottomZ: applyZ(-totalDepth), resultContourInside: true, resultBounds, toolDiameter: cutParams.toolDiameter };
   }
 
+  // Draadfrezen: helicale paden rond draadcentrum (meerdere radiale veiligheidspasses)
+  if (shape === ShapeType.THREAD_MILLING) {
+    const majorDia = shapeParams.majorDiameter;
+    const pitch = shapeParams.pitch;
+    const threadDepth = shapeParams.threadDepth;
+    const holeDia = shapeParams.holeDiameter;
+    const threadMillType = shapeParams.threadMillType || ThreadMillType.INTERNAL;
+    const toolDia = cutParams.toolDiameter;
+    const stepover = cutParams.stepover;
+    const safeZ = cutParams.safeHeight;
+    const leadInAbove = Math.max(0, cutParams.leadInAboveMm ?? 2);
+    const helixSign = getThreadMillingHelixSign(threadMillType);
+    const cx = 0;
+    const cy = 0;
+    const zStart = leadInAbove;
+    const zEnd = -threadDepth;
+    const totalZDrop = zStart - zEnd;
+    const totalRevolutions = totalZDrop / pitch;
+    const totalAngle = totalRevolutions * 2 * Math.PI;
+
+    const rFinish = getThreadMillingFinishRadius(majorDia, toolDia, threadMillType);
+    const passRadii = THREAD_MILLING_SPRING_PASSES_ENABLED
+      ? computeThreadMillingPassRadii(holeDia, majorDia, toolDia, stepover)
+      : (rFinish > 1e-6 ? [rFinish] : []);
+
+    passRadii.forEach((pathRadius, passIdx) => {
+      const isFirstPass = passIdx === 0;
+      const isLastPass = passIdx === passRadii.length - 1;
+      const segs = segmentsForCircleRadius(pathRadius);
+      const totalSteps = Math.max(segs, Math.ceil(totalRevolutions * segs));
+      const deltaAngle = (helixSign * totalAngle) / totalSteps;
+      const deltaZ = (zEnd - zStart) / totalSteps;
+      const startX = cx + pathRadius;
+      const startY = cy;
+
+      if (isFirstPass) {
+        moves.push({ x: startX, y: startY, z: safeZ, type: "rapid" });
+        if (safeZ > leadInAbove) {
+          moves.push({ x: startX, y: startY, z: leadInAbove, type: "rapid" });
+        }
+      } else {
+        moves.push({ x: startX, y: startY, z: leadInAbove, type: "rapid" });
+      }
+
+      let angle = 0;
+      let z = zStart;
+      for (let i = 0; i < totalSteps; i++) {
+        angle += deltaAngle;
+        z += deltaZ;
+        moves.push({
+          x: cx + pathRadius * Math.cos(angle),
+          y: cy + pathRadius * Math.sin(angle),
+          z,
+          type: "cut",
+        });
+      }
+
+      const bottomZ = zEnd;
+      const last = moves[moves.length - 1];
+      const isExternal = threadMillType === ThreadMillType.EXTERNAL;
+      if (isExternal) {
+        const lx = last.x;
+        const ly = last.y;
+        const dist = Math.hypot(lx - cx, ly - cy);
+        const retractRadius = pathRadius + toolDia;
+        const scale = dist > 1e-6 ? retractRadius / dist : 1;
+        const retractX = cx + (lx - cx) * scale;
+        const retractY = cy + (ly - cy) * scale;
+        if (Math.hypot(lx - retractX, ly - retractY) > 1e-6) {
+          moves.push({ x: retractX, y: retractY, z: bottomZ, type: "rapid" });
+        }
+        const retractZ = isLastPass ? safeZ : leadInAbove;
+        moves.push({ x: retractX, y: retractY, z: retractZ, type: "rapid" });
+      } else {
+        if (Math.abs(last.x - cx) > 1e-6 || Math.abs(last.y - cy) > 1e-6) {
+          moves.push({ x: cx, y: cy, z: bottomZ, type: "rapid" });
+        }
+        if (isLastPass) {
+          moves.push({ x: cx, y: cy, z: safeZ, type: "rapid" });
+        } else {
+          moves.push({ x: cx, y: cy, z: leadInAbove, type: "rapid" });
+        }
+      }
+    });
+
+    const majorR = majorDia / 2;
+    const majorOutlinePath = [];
+    const majorSegs = segmentsForCircleRadius(majorR);
+    for (let i = 0; i <= majorSegs; i++) {
+      const t = (i / majorSegs) * 2 * Math.PI;
+      majorOutlinePath.push({ x: majorR * Math.cos(t), y: majorR * Math.sin(t), z: 0 });
+    }
+    const isExternal = threadMillType === ThreadMillType.EXTERNAL;
+    let innerOutlinePath;
+    if (isExternal) {
+      const minorDia = Math.max(0, externalThreadMinorDiameter(majorDia, pitch));
+      const minorR = minorDia / 2;
+      const minorSegs = segmentsForCircleRadius(Math.max(minorR, 1e-6));
+      innerOutlinePath = [];
+      for (let i = 0; i <= minorSegs; i++) {
+        const t = (i / minorSegs) * 2 * Math.PI;
+        innerOutlinePath.push({ x: minorR * Math.cos(t), y: minorR * Math.sin(t), z: 0 });
+      }
+    } else {
+      const holeR = shapeParams.holeDiameter / 2;
+      const holeSegs = segmentsForCircleRadius(holeR);
+      innerOutlinePath = [];
+      for (let i = 0; i <= holeSegs; i++) {
+        const t = (i / holeSegs) * 2 * Math.PI;
+        innerOutlinePath.push({ x: holeR * Math.cos(t), y: holeR * Math.sin(t), z: 0 });
+      }
+    }
+
+    const shift = computeOriginShift(moves, originParams, threadDepth, 0, OperationType.POCKET, "inside", undefined, false);
+    applyOriginTransform(moves, originParams, threadDepth, 0, OperationType.POCKET, "inside");
+    const zOffset = shift.zOffset;
+    const zOriginMode = shift.zOriginMode;
+    const applyZ = (z) => {
+      let out = z;
+      if (zOriginMode === ZOrigin.STOCK_BOTTOM) out += threadDepth;
+      return out + zOffset;
+    };
+    [innerOutlinePath, majorOutlinePath].forEach((path) => {
+      applyOriginTransformToPoints(path, shift.shiftX, shift.shiftY, shift.zOffset, shift.zOriginMode, threadDepth);
+    });
+    const resultPathsWithDepth = [
+      { path: innerOutlinePath, topZ: applyZ(0), bottomZ: applyZ(-threadDepth) },
+      { path: majorOutlinePath, topZ: applyZ(0), bottomZ: applyZ(-threadDepth) },
+    ];
+    const resultBounds = computeBoundsFromPaths([innerOutlinePath, majorOutlinePath]);
+    return { moves, resultPathsWithDepth, resultTotalDepth: threadDepth, resultBottomZ: applyZ(-threadDepth), resultContourInside: !isExternal, resultBounds, toolDiameter: cutParams.toolDiameter };
+  }
+
   // Voor contour: pad met halve freesdiameter offset (binnen- of buitencontour),
   // behalve in het speciale geval "binnencontour exact freesdiameter".
   /** @type {{x:number,y:number,z:number}[][]|null} - meerdere contouren (alleen bij circular pattern holes) */
@@ -3479,12 +4108,19 @@ function generateToolpath(params) {
   // Voor facing: parallelle strips (alleen vierkant/rechthoek)
   /** @type {{x:number,y:number,z:number}[][]} */
   let facingPaths = [];
+  /** @type {{ hw:number, hh:number, within:boolean } | null} */
+  let facingOpenBounds = null;
   if (shape === ShapeType.FACING || (operation === OperationType.FACING && (shape === ShapeType.SQUARE || shape === ShapeType.RECTANGLE))) {
     const mode = (params.facingMode && String(params.facingMode).toLowerCase().trim() === "within") ? "within" : "full";
     const dir = (params.facingDirection && String(params.facingDirection).toLowerCase().trim() === "y") ? "y" : "x";
+    const finishMode = normalizeFacingFinishMode(params.facingFinishMode);
     const even = !!params.facingEvenSpacing;
     const useShape = shape === ShapeType.FACING ? ShapeType.RECTANGLE : shape;
     const useParams = shapeParams;
+    const facingGeom = getFacingEffectiveGeometry(useShape, useParams, toolRadius, mode);
+    if (facingGeom) {
+      facingOpenBounds = { hw: facingGeom.hwEff, hh: facingGeom.hhEff, within: mode === "within" };
+    }
     facingPaths = generateFacingPaths(
       useShape,
       useParams,
@@ -3494,6 +4130,31 @@ function generateToolpath(params) {
       dir,
       even
     );
+    let phaseEnd = getLastPointFromPaths(facingPaths);
+    if (finishMode === "cross") {
+      const crossDir = dir === "y" ? "x" : "y";
+      let crossPaths = generateFacingPaths(
+        useShape,
+        useParams,
+        cutParams.stepover,
+        toolRadius,
+        mode,
+        crossDir,
+        even
+      );
+      crossPaths = orientOpenPathsFromReference(crossPaths, phaseEnd);
+      if (crossPaths.length) facingPaths.push(...crossPaths);
+      phaseEnd = getLastPointFromPaths(facingPaths);
+    } else if (finishMode === "perimeter") {
+      let perimeterPath = generateFacingPerimeterPath(
+        useShape,
+        useParams,
+        toolRadius,
+        mode
+      );
+      perimeterPath = rotateClosedPathStartNear(perimeterPath, phaseEnd);
+      if (perimeterPath.length >= 2) facingPaths.push(perimeterPath);
+    }
   }
 
   // Voor pocket: één spiraalpad per vorm (stepover, volledige dekking)
@@ -3831,10 +4492,6 @@ function generateToolpath(params) {
         }
       } else if (operation === OperationType.FACING) {
         const toolRadiusFacing = cutParams.toolDiameter / 2;
-        const isFacingShape = shape === ShapeType.FACING;
-        const hw = (isFacingShape ? shapeParams.width : (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.width)) / 2 - toolRadiusFacing;
-        const hh = (isFacingShape ? shapeParams.height : (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.height)) / 2 - toolRadiusFacing;
-        const maxHelixRadiusFacing = Math.max(0, Math.min(hw, hh));
         facingPaths.forEach((path, idx) => {
           addLayerForPath(
             moves,
@@ -3847,14 +4504,16 @@ function generateToolpath(params) {
             safeZ,
             undefined,
             false,
-            true,
+            false, // helix-ramp op strip-start via openPath (niet via midden van vlak)
             toolRadiusFacing,
             true,
-            maxHelixRadiusFacing,
-            0,
-            0,
-            true,
-            true  // keepToolDownBetweenPaths: geen retract tussen strips
+            undefined,
+            undefined,
+            undefined,
+            false, // elke dieptelaag: retract en opnieuw insteken aan strip-start
+            true,  // keepToolDownBetweenPaths: geen retract tussen strips
+            true,  // openPath: strip is geen gesloten contour
+            facingOpenBounds
           );
         });
       } else {
@@ -4019,7 +4678,7 @@ function generateToolpath(params) {
   if (moves.length > 0) {
     const last = moves[moves.length - 1];
     if (last.z < safeZ - 1e-6) {
-      if (operation === OperationType.POCKET || operation === OperationType.FACING || (shape === ShapeType.CIRCULAR_PATTERN_HOLES && operation === OperationType.CONTOUR && pocketCenters.length > 0)) {
+      if (operation === OperationType.POCKET || (shape === ShapeType.CIRCULAR_PATTERN_HOLES && operation === OperationType.CONTOUR && pocketCenters.length > 0)) {
         // Eerst een recht lijntje richting het midden (net van de rand af), dan retract — geen boog, geen sporen
         const cx = ((shape === ShapeType.PATTERNED_HOLES || shape === ShapeType.CIRCULAR_PATTERN_HOLES) && pocketCenters.length > 0) ? pocketCenters[pocketCenters.length - 1].x : 0;
         const cy = ((shape === ShapeType.PATTERNED_HOLES || shape === ShapeType.CIRCULAR_PATTERN_HOLES) && pocketCenters.length > 0) ? pocketCenters[pocketCenters.length - 1].y : 0;
@@ -4086,6 +4745,8 @@ function generateToolpath(params) {
  * @param {number} [helixCenterY] // bij pocket: Y van midden
  * @param {boolean} [allowContinuingFromPreviousLayer] // false = altijd retract (bij multi-contour: vorige was andere contour)
  * @param {boolean} [keepToolDownBetweenPaths] // bij facing: geen retract tussen strips, direct cut naar volgende strip
+ * @param {boolean} [openPath] // bij facing: open strip-pad; helix-ramp op startpunt, daarna volledige strip op diepte
+ * @param {{ hw:number, hh:number, within:boolean } | null} [openPathBounds] // effectief facing-werkvlak voor helix-plaatsing
  */
 function addLayerForPath(
   moves,
@@ -4105,7 +4766,9 @@ function addLayerForPath(
   helixCenterX = undefined,
   helixCenterY = undefined,
   allowContinuingFromPreviousLayer = true,
-  keepToolDownBetweenPaths = false
+  keepToolDownBetweenPaths = false,
+  openPath = false,
+  openPathBounds = null
 ) {
   if (!path || path.length === 0) return;
 
@@ -4671,6 +5334,71 @@ function addLayerForPath(
 
       moves.push({ x: start.x, y: start.y, z: depthZ, type: "cut" });
       skipFirstPathPoint = true;
+    } else if (openPath) {
+      // Open strip (facing): compacte helix-ramp op strip-start, binnen werkvlak bij modus "within".
+      const helixPlacement = computeFacingStripHelixPlacement(
+        start,
+        path,
+        cutParams.toolDiameter,
+        openPathBounds
+      );
+      const cx = helixPlacement.cx;
+      const cy = helixPlacement.cy;
+      const helixR = helixPlacement.helixR;
+      const helixStartX = start.x;
+      const helixStartY = start.y;
+      const helixRampStartZ = continuingFromPreviousLayer ? zStart : zStart + leadInAbove;
+
+      if (!continuingFromPreviousLayer) {
+        moves.push({ x: helixStartX, y: helixStartY, z: safeZ, type: "rapid" });
+        if (safeZ > zStart + leadInAbove) {
+          moves.push({ x: helixStartX, y: helixStartY, z: zStart + leadInAbove, type: "rapid" });
+        }
+      } else {
+        moves.push({ x: helixStartX, y: helixStartY, z: last.z, type: "cut" });
+      }
+
+      let currentAngle = helixPlacement.startAngle;
+      let currentZ = continuingFromPreviousLayer ? last.z : helixRampStartZ;
+      const maxAnglePerMove = degToRad(8);
+      const R = Math.max(1e-6, helixR);
+
+      while (currentZ > targetZ - 1e-6) {
+        const remainingZ = currentZ - targetZ;
+        const segmentDeltaZ =
+          Math.abs(remainingZ) > maxDepth ? -maxDepth : -Math.abs(remainingZ);
+        const segmentZ = currentZ + segmentDeltaZ;
+        const isLastSegment = segmentZ <= targetZ + 1e-6;
+
+        let arcLength =
+          rampAngleRad > 0 ? Math.abs(segmentDeltaZ) / Math.tan(rampAngleRad) : 0;
+        if (!isFinite(arcLength) || arcLength <= 0) arcLength = 0;
+        let deltaAngleTotal = R > 1e-6 ? arcLength / R : 0;
+        if (isLastSegment) {
+          const minAngleForRamp =
+            R > 1e-6 && rampAngleRad > 0
+              ? Math.abs(targetZ - currentZ) / (R * Math.tan(rampAngleRad))
+              : 0;
+          deltaAngleTotal = Math.max(deltaAngleTotal, minAngleForRamp);
+        }
+        const numSteps = Math.max(1, Math.ceil(deltaAngleTotal / maxAnglePerMove));
+        const deltaAngle = deltaAngleTotal / numSteps;
+        const deltaZTotal = isLastSegment ? targetZ - currentZ : segmentDeltaZ;
+        const deltaZPerStep = deltaZTotal / numSteps;
+
+        for (let step = 0; step < numSteps; step++) {
+          currentAngle += deltaAngle;
+          const z = currentZ + deltaZPerStep * (step + 1);
+          const x = cx + R * Math.cos(currentAngle);
+          const y = cy + R * Math.sin(currentAngle);
+          moves.push({ x, y, z, type: "cut" });
+        }
+        currentZ = isLastSegment ? targetZ : segmentZ;
+        if (currentZ <= targetZ + 1e-6) break;
+      }
+
+      moves.push({ x: start.x, y: start.y, z: depthZ, type: "cut" });
+      skipFirstPathPoint = true;
     } else {
       // Contour ramp: P(path[0]) → ramp → B op diepte; dan contour van B naar P. Onderste laag: contour afmaken tot B.
       // Het rechte stuk boven het materiaal (leadInAbove) is onderdeel van de ramp: ramp start bij zStart+leadInAbove.
@@ -5178,49 +5906,95 @@ function fitArcsToPoints(points) {
 }
 
 /**
- * G-code genereren uit toolpath. Cut-reeksen op dezelfde Z worden waar mogelijk als G2/G3-bogen uitgevoerd.
- * Gebruikt de geselecteerde eenheid (mm of inch): bij inch wordt G20 en alle coördinaten/F in inches uitgevoerd.
- * @param {Toolpath} toolpath
- * @param {*} params
+ * @param {string} shape
+ * @returns {boolean}
  */
-function toolpathToGcode(toolpath, params) {
-  const { cutParams } = params;
-  const unit = getDisplayUnit();
-  const useInch = unit === "inch";
-  const safeZMm = cutParams.safeHeight ?? DEFAULT_SAFE_Z;
-  const safeZ = useInch ? fromMm(safeZMm, "inch") : safeZMm;
-  const decimals = useInch ? 4 : 3;
-  const feedrate = cutParams.feedrate && cutParams.feedrate > 0
-    ? (useInch ? cutParams.feedrate / MM_PER_INCH : cutParams.feedrate)
-    : 0;
-  const lines = [];
-  const mirrorX = !!cutParams.mirrorXEnabled;
-  const mirrorY = !!cutParams.mirrorYEnabled;
-  const mirrorFlipsArcDir = (mirrorX ? 1 : 0) + (mirrorY ? 1 : 0) === 1;
+function isBasicShapeType(shape) {
+  return shape === ShapeType.CIRCLE
+    || shape === ShapeType.SQUARE
+    || shape === ShapeType.RECTANGLE
+    || shape === ShapeType.HEXAGON
+    || shape === ShapeType.ELLIPSE;
+}
 
-  lines.push(`(${t("gcode.comment.generated")})`);
-  lines.push(useInch ? `G20  (${t("gcode.comment.unitsInch")})` : `G21  (${t("gcode.comment.unitsMm")})`);
-  lines.push(`G90  (${t("gcode.comment.absolute")})`);
-  lines.push(`G0 Z${safeZ.toFixed(decimals)}`);
-  const spindleCmd = cutParams.spindleSpeedEnabled && cutParams.spindleSpeed
-    ? `M3 S${Math.round(cutParams.spindleSpeed)}  (${t("gcode.comment.spindleOn")})`
-    : `M3  (${t("gcode.comment.spindleOn")})`;
-  lines.push(spindleCmd);
-  if (cutParams.mistCoolantEnabled) lines.push(`M7  (${t("gcode.comment.coolantMistOn")})`);
-  if (cutParams.floodCoolantEnabled) lines.push(`M8  (${t("gcode.comment.coolantFloodOn")})`);
+/**
+ * @param {string} shape
+ * @returns {string}
+ */
+function getGcodeShapeLabel(shape) {
+  switch (shape) {
+    case ShapeType.CIRCLE: return t("form.shapeCircle");
+    case ShapeType.SQUARE: return t("form.shapeSquare");
+    case ShapeType.RECTANGLE: return t("form.shapeRectangle");
+    case ShapeType.HEXAGON: return t("form.shapeHexagon");
+    case ShapeType.ELLIPSE: return t("form.shapeEllipse");
+    default: return "";
+  }
+}
 
-  let currentFeed = 0;
-  let currentFeedOverridePct = 100;
-  let currentX = null;
-  let currentY = null;
+/**
+ * Leesbare operatienaam voor G-code header-comment.
+ * @param {*} params
+ * @returns {string}
+ */
+function getGcodeOperationLabel(params) {
+  const { shape, operation, contourType, shapeParams } = params;
+  if (shape === ShapeType.LETTERS) {
+    return `${t("form.shapeLetters")} - ${t("form.letterModeOutline")}`;
+  }
+  if (shape === ShapeType.COUNTERBORE_BOLT) return t("form.shapeCounterboreBolt");
+  if (shape === ShapeType.THREAD_MILLING) {
+    const type = shapeParams?.threadMillType === ThreadMillType.EXTERNAL
+      ? t("form.threadMillTypeExternal")
+      : t("form.threadMillTypeInternal");
+    return `${t("form.shapeThreadMilling")} - ${type}`;
+  }
+  if (shape === ShapeType.PATTERNED_HOLES) {
+    return `${t("form.shapePatternedHoles")} - ${t("form.operationPocket")}`;
+  }
+  if (shape === ShapeType.CIRCULAR_PATTERN_HOLES) {
+    const opLabel = operation === OperationType.CONTOUR
+      ? t("form.operationContour")
+      : t("form.operationPocket");
+    return `${t("form.shapePatternedHoles")} - ${opLabel}`;
+  }
+  if (shape === ShapeType.DXF) {
+    const opLabel = operation === OperationType.POCKET
+      ? t("form.operationPocket")
+      : (contourType === "engraving" ? t("form.contourEngraving") : t("form.operationContour"));
+    return `${t("form.shapeDxf")} - ${opLabel}`;
+  }
+  if (shape === ShapeType.FACING || operation === OperationType.FACING) return t("form.operationFacing");
+  let opLabel = "";
+  if (operation === OperationType.POCKET) {
+    opLabel = t("form.operationPocket");
+  } else if (operation === OperationType.CONTOUR) {
+    if (contourType === "inside") opLabel = t("form.contourInside");
+    else if (contourType === "engraving") opLabel = t("form.contourEngraving");
+    else opLabel = t("form.contourOutside");
+  } else {
+    return operation || "";
+  }
+  if (isBasicShapeType(shape)) {
+    return `${opLabel} - ${getGcodeShapeLabel(shape)}`;
+  }
+  return opLabel;
+}
+
+/**
+ * G-code moves schrijven (gedeeld door enkelvoudige en gekoppelde jobs).
+ * @param {string[]} lines
+ * @param {ToolpathMove[]} moves
+ * @param {*} cutParams
+ * @param {object} ctx
+ */
+function appendToolpathMovesAsGcode(lines, moves, cutParams, ctx) {
+  const {
+    useInch, decimals, feedrate, mirrorX, mirrorY, mirrorFlipsArcDir,
+  } = ctx;
+  let { currentFeed, currentFeedOverridePct, currentX, currentY } = ctx;
   const ARC_RADIUS_TOL_MM = 1.0;
   const ARC_MIN_CHORD_MM = 1e-6;
-  /** @type {ToolpathMove[]} */
-  const moves = toolpath.moves.map((m) => ({ ...m }));
-  if (cutParams.useArcsEnabled) {
-    replaceCutRunsWithArcs(moves);
-  }
-  let idx = 0;
 
   function outCoord(v) {
     if (v == null || !Number.isFinite(v)) return null;
@@ -5240,6 +6014,7 @@ function toolpathToGcode(toolpath, params) {
     return Math.max(5, Math.min(200, Math.round(value)));
   }
 
+  let idx = 0;
   while (idx < moves.length) {
     const m = moves[idx];
     const targetFeedOverridePct = m.type === "cut" ? clampFeedOverridePct(m.feedOverridePct ?? 100) : 100;
@@ -5290,7 +6065,79 @@ function toolpathToGcode(toolpath, params) {
     idx++;
   }
 
-  if (currentFeedOverridePct !== 100) {
+  ctx.currentFeed = currentFeed;
+  ctx.currentFeedOverridePct = currentFeedOverridePct;
+  ctx.currentX = currentX;
+  ctx.currentY = currentY;
+}
+
+/**
+ * G-code voor meerdere gekoppelde stappen (één header/footer, geen toolwissel).
+ * @param {{ toolpath: Toolpath, params: * }[]} steps
+ */
+function jobToolpathsToGcode(steps) {
+  if (!steps.length) return "";
+  const firstParams = steps[0].params;
+  const cutParams = firstParams.cutParams;
+  const unit = getDisplayUnit();
+  const useInch = unit === "inch";
+  const safeZMm = cutParams.safeHeight ?? DEFAULT_SAFE_Z;
+  const safeZ = useInch ? fromMm(safeZMm, "inch") : safeZMm;
+  const decimals = useInch ? 4 : 3;
+  const feedrate = cutParams.feedrate && cutParams.feedrate > 0
+    ? (useInch ? cutParams.feedrate / MM_PER_INCH : cutParams.feedrate)
+    : 0;
+  const lines = [];
+  const mirrorX = !!cutParams.mirrorXEnabled;
+  const mirrorY = !!cutParams.mirrorYEnabled;
+  const mirrorFlipsArcDir = (mirrorX ? 1 : 0) + (mirrorY ? 1 : 0) === 1;
+
+  lines.push(`(${t("gcode.comment.generated", { url: GCODE_TOOLBOX_URL })})`);
+  lines.push(`(${t("gcode.comment.useAtOwnRisk")})`);
+  lines.push(`(${t("gcode.comment.operation", { name: getGcodeOperationLabel(firstParams) })})`);
+  lines.push(useInch ? `G20  (${t("gcode.comment.unitsInch")})` : `G21  (${t("gcode.comment.unitsMm")})`);
+  lines.push(`G90  (${t("gcode.comment.absolute")})`);
+  lines.push(`G0 Z${safeZ.toFixed(decimals)}`);
+  const spindleCmd = cutParams.spindleSpeedEnabled && cutParams.spindleSpeed
+    ? `M3 S${Math.round(cutParams.spindleSpeed)}  (${t("gcode.comment.spindleOn")})`
+    : `M3  (${t("gcode.comment.spindleOn")})`;
+  lines.push(spindleCmd);
+  if (cutParams.mistCoolantEnabled) lines.push(`M7  (${t("gcode.comment.coolantMistOn")})`);
+  if (cutParams.floodCoolantEnabled) lines.push(`M8  (${t("gcode.comment.coolantFloodOn")})`);
+
+  /** @type {object} */
+  const ctx = {
+    useInch,
+    decimals,
+    feedrate,
+    mirrorX,
+    mirrorY,
+    mirrorFlipsArcDir,
+    currentFeed: 0,
+    currentFeedOverridePct: 100,
+    currentX: null,
+    currentY: null,
+  };
+
+  steps.forEach((step, stepIndex) => {
+    const stepCut = step.params.cutParams;
+    if (stepIndex > 0) {
+      lines.push(`G0 Z${safeZ.toFixed(decimals)}`);
+      lines.push(`(${t("gcode.comment.operation", { name: getGcodeOperationLabel(step.params) })})`);
+    }
+    ctx.feedrate = stepCut.feedrate && stepCut.feedrate > 0
+      ? (useInch ? stepCut.feedrate / MM_PER_INCH : stepCut.feedrate)
+      : 0;
+    ctx.currentFeed = 0;
+    /** @type {ToolpathMove[]} */
+    const moves = step.toolpath.moves.map((m) => ({ ...m }));
+    if (stepCut.useArcsEnabled) {
+      replaceCutRunsWithArcs(moves);
+    }
+    appendToolpathMovesAsGcode(lines, moves, stepCut, ctx);
+  });
+
+  if (ctx.currentFeedOverridePct !== 100) {
     lines.push("M220 S100");
   }
   lines.push(`G0 Z${safeZ.toFixed(decimals)}`);
@@ -5299,6 +6146,16 @@ function toolpathToGcode(toolpath, params) {
   lines.push("M30");
 
   return lines.join("\n");
+}
+
+/**
+ * G-code genereren uit toolpath. Cut-reeksen op dezelfde Z worden waar mogelijk als G2/G3-bogen uitgevoerd.
+ * Gebruikt de geselecteerde eenheid (mm of inch): bij inch wordt G20 en alle coördinaten/F in inches uitgevoerd.
+ * @param {Toolpath} toolpath
+ * @param {*} params
+ */
+function toolpathToGcode(toolpath, params) {
+  return jobToolpathsToGcode([{ toolpath, params }]);
 }
 
 /** Typische snelle verplaatsing (G0) in mm/min voor tijdsinschatting. */
@@ -5399,6 +6256,62 @@ function parseGcodeLineForPoint(line) {
     y,
     z: Number.isFinite(z) ? z : 0,
   };
+}
+
+/**
+ * Normaliseert preview-resultaten naar items met per-pad contourInside.
+ * @param {Toolpath} toolpath
+ * @returns {{ path: {x:number,y:number,z:number}[], topZ: number, bottomZ: number, contourInside: boolean }[]}
+ */
+function getResultPreviewItems(toolpath) {
+  const defaultInside = toolpath.resultContourInside !== false;
+  const resultTotalDepth = toolpath.resultTotalDepth;
+  const resultBottomZ = toolpath.resultBottomZ;
+  const topZDefault = resultBottomZ === 0 ? (resultTotalDepth ?? 0) : 0;
+  const bottomZDefault = Number.isFinite(resultBottomZ) ? resultBottomZ : -(resultTotalDepth ?? 0);
+
+  if (toolpath.resultPathsWithDepth && toolpath.resultPathsWithDepth.length > 0) {
+    return toolpath.resultPathsWithDepth
+      .filter((item) => item?.path && item.path.length >= 2)
+      .map((item) => ({
+        path: item.path,
+        topZ: item.topZ,
+        bottomZ: item.bottomZ,
+        contourInside: item.contourInside !== undefined ? item.contourInside !== false : defaultInside,
+      }));
+  }
+  if (toolpath.resultPaths && toolpath.resultPaths.length > 0) {
+    return toolpath.resultPaths
+      .filter((path) => path && path.length >= 2)
+      .map((path) => ({
+        path,
+        topZ: topZDefault,
+        bottomZ: bottomZDefault,
+        contourInside: defaultInside,
+      }));
+  }
+  return [];
+}
+
+/**
+ * Voegt een gesloten resultaatcontour toe aan het huidige canvas-pad (TOP-view).
+ */
+function appendResultPathToTopContext(ctx, path, topZ, projectPoint, toCanvas, cx, cy, cz, depthScale) {
+  const pts = path.map((p) => ({ x: p.x, y: p.y }));
+  const closed = pts.length >= 3
+    && Math.abs(pts[0].x - pts[pts.length - 1].x) < 1e-9
+    && Math.abs(pts[0].y - pts[pts.length - 1].y) < 1e-9;
+  const n = closed ? pts.length - 1 : pts.length;
+  if (n < 2) return;
+  const p0 = projectPoint(pts[0].x - cx, pts[0].y - cy, (cz - topZ) * depthScale);
+  const c0 = toCanvas(p0);
+  ctx.moveTo(c0.x, c0.y);
+  for (let i = 1; i < n; i++) {
+    const p = projectPoint(pts[i].x - cx, pts[i].y - cy, (cz - topZ) * depthScale);
+    const c = toCanvas(p);
+    ctx.lineTo(c.x, c.y);
+  }
+  ctx.closePath();
 }
 
 /**
@@ -5599,14 +6512,11 @@ function renderPreview(toolpath, canvas, viewMode = currentPreviewView, cursorCo
   ctx.restore();
 
   // 2.5D gefreesd resultaat tekenen (bodem + zijwanden)
-  const resultPaths = toolpath.resultPaths;
-  const resultPathsWithDepth = toolpath.resultPathsWithDepth;
   const resultTotalDepth = toolpath.resultTotalDepth;
   const resultBottomZ = toolpath.resultBottomZ;
   const resultContourInside = toolpath.resultContourInside;
-  const usePathsWithDepth = resultPathsWithDepth && resultPathsWithDepth.length > 0;
-  const pathsToUse = usePathsWithDepth ? resultPathsWithDepth.map((p) => p.path) : resultPaths;
-  if (pathsToUse && pathsToUse.length > 0 && Number.isFinite(resultTotalDepth)) {
+  const previewItems = getResultPreviewItems(toolpath);
+  if (previewItems.length > 0 && Number.isFinite(resultTotalDepth)) {
     const topZ = resultBottomZ === 0 ? resultTotalDepth : 0;
     const bottomZ = resultBottomZ;
     const isLightTheme = typeof document !== "undefined" && document.body?.dataset.theme === "light";
@@ -5614,65 +6524,46 @@ function renderPreview(toolpath, canvas, viewMode = currentPreviewView, cursorCo
     const strokeColor = isLightTheme ? "rgba(175, 185, 195, 0.4)" : "rgba(200, 208, 218, 0.35)";
     const wallColor = isLightTheme ? "rgba(180, 190, 200, 0.35)" : "rgba(200, 210, 220, 0.3)";
 
-    const validPaths = pathsToUse.filter((path) => path && path.length >= 2);
-    if (validPaths.length > 0) {
+    const outsideItems = previewItems.filter((item) => !item.contourInside);
+    const insideItems = previewItems.filter((item) => item.contourInside);
+
     if (viewMode === PreviewViewMode.TOP) {
       ctx.save();
       ctx.fillStyle = fillColor;
       ctx.strokeStyle = strokeColor;
       ctx.lineWidth = 1;
-      ctx.beginPath();
-      if (resultContourInside) {
-        ctx.rect(0, 0, canvas.width, canvas.height);
-        validPaths.forEach((path) => {
-          const pts = path.map((p) => ({ x: p.x, y: p.y }));
-          const closed = pts.length >= 3 && Math.abs(pts[0].x - pts[pts.length - 1].x) < 1e-9 && Math.abs(pts[0].y - pts[pts.length - 1].y) < 1e-9;
-          const n = closed ? pts.length - 1 : pts.length;
-          if (n < 2) return;
-          const p0 = projectPoint(pts[0].x - cx, pts[0].y - cy, (cz - topZ) * DEPTH_SCALE);
-          const c0 = toCanvas(p0);
-          ctx.moveTo(c0.x, c0.y);
-          for (let i = 1; i < n; i++) {
-            const p = projectPoint(pts[i].x - cx, pts[i].y - cy, (cz - topZ) * DEPTH_SCALE);
-            const c = toCanvas(p);
-            ctx.lineTo(c.x, c.y);
-          }
-          ctx.closePath();
-        });
-        ctx.fill("evenodd");
-      } else {
-        validPaths.forEach((path) => {
-          const pts = path.map((p) => ({ x: p.x, y: p.y }));
-          const closed = pts.length >= 3 && Math.abs(pts[0].x - pts[pts.length - 1].x) < 1e-9 && Math.abs(pts[0].y - pts[pts.length - 1].y) < 1e-9;
-          const n = closed ? pts.length - 1 : pts.length;
-          if (n < 2) return;
-          const p0 = projectPoint(pts[0].x - cx, pts[0].y - cy, (cz - topZ) * DEPTH_SCALE);
-          const c0 = toCanvas(p0);
-          ctx.moveTo(c0.x, c0.y);
-          for (let i = 1; i < n; i++) {
-            const p = projectPoint(pts[i].x - cx, pts[i].y - cy, (cz - topZ) * DEPTH_SCALE);
-            const c = toCanvas(p);
-            ctx.lineTo(c.x, c.y);
-          }
-          ctx.closePath();
+
+      if (outsideItems.length > 0) {
+        ctx.beginPath();
+        outsideItems.forEach((item) => {
+          appendResultPathToTopContext(ctx, item.path, item.topZ, projectPoint, toCanvas, cx, cy, cz, DEPTH_SCALE);
         });
         ctx.fill();
       }
-      validPaths.forEach((path) => {
-        const pts = path.map((p) => ({ x: p.x, y: p.y }));
-        const closed = pts.length >= 3 && Math.abs(pts[0].x - pts[pts.length - 1].x) < 1e-9 && Math.abs(pts[0].y - pts[pts.length - 1].y) < 1e-9;
-        const n = closed ? pts.length - 1 : pts.length;
-        if (n < 2) return;
-        ctx.beginPath();
-        const p0 = projectPoint(pts[0].x - cx, pts[0].y - cy, (cz - topZ) * DEPTH_SCALE);
-        const c0 = toCanvas(p0);
-        ctx.moveTo(c0.x, c0.y);
-        for (let i = 1; i < n; i++) {
-          const p = projectPoint(pts[i].x - cx, pts[i].y - cy, (cz - topZ) * DEPTH_SCALE);
-          const c = toCanvas(p);
-          ctx.lineTo(c.x, c.y);
+
+      if (insideItems.length > 0) {
+        if (outsideItems.length > 0) {
+          ctx.save();
+          ctx.globalCompositeOperation = "destination-out";
+          ctx.beginPath();
+          insideItems.forEach((item) => {
+            appendResultPathToTopContext(ctx, item.path, item.topZ, projectPoint, toCanvas, cx, cy, cz, DEPTH_SCALE);
+          });
+          ctx.fill();
+          ctx.restore();
+        } else {
+          ctx.beginPath();
+          ctx.rect(0, 0, canvas.width, canvas.height);
+          insideItems.forEach((item) => {
+            appendResultPathToTopContext(ctx, item.path, item.topZ, projectPoint, toCanvas, cx, cy, cz, DEPTH_SCALE);
+          });
+          ctx.fill("evenodd");
         }
-        ctx.closePath();
+      }
+
+      previewItems.forEach((item) => {
+        ctx.beginPath();
+        appendResultPathToTopContext(ctx, item.path, item.topZ, projectPoint, toCanvas, cx, cy, cz, DEPTH_SCALE);
         ctx.stroke();
       });
       ctx.restore();
@@ -5680,7 +6571,7 @@ function renderPreview(toolpath, canvas, viewMode = currentPreviewView, cursorCo
       ctx.save();
       ctx.strokeStyle = strokeColor;
       ctx.lineWidth = 1;
-      if (resultContourInside) {
+      if (resultContourInside && insideItems.length > 0 && outsideItems.length === 0) {
         ctx.fillStyle = fillColor;
         ctx.beginPath();
         if (viewMode === PreviewViewMode.FRONT || viewMode === PreviewViewMode.SIDE) {
@@ -5718,10 +6609,10 @@ function renderPreview(toolpath, canvas, viewMode = currentPreviewView, cursorCo
           ctx.lineTo(-pad, canvas.height + pad);
         }
         ctx.closePath();
-        (usePathsWithDepth ? resultPathsWithDepth : validPaths.map((path) => ({ path, topZ, bottomZ }))).forEach((item) => {
+        insideItems.forEach((item) => {
           const path = item.path;
-          const pathTopZ = usePathsWithDepth ? item.topZ : topZ;
-          const pathBottomZ = usePathsWithDepth ? item.bottomZ : bottomZ;
+          const pathTopZ = item.topZ;
+          const pathBottomZ = item.bottomZ;
           const pts = path.map((p) => ({ x: p.x, y: p.y }));
           const closed = pts.length >= 3 && Math.abs(pts[0].x - pts[pts.length - 1].x) < 1e-9 && Math.abs(pts[0].y - pts[pts.length - 1].y) < 1e-9;
           const n = closed ? pts.length - 1 : pts.length;
@@ -5740,10 +6631,10 @@ function renderPreview(toolpath, canvas, viewMode = currentPreviewView, cursorCo
         });
         ctx.fill("evenodd");
         ctx.fillStyle = wallColor;
-        (usePathsWithDepth ? resultPathsWithDepth : validPaths.map((path) => ({ path, topZ, bottomZ }))).forEach((item) => {
+        insideItems.forEach((item) => {
           const path = item.path;
-          const pathTopZ = usePathsWithDepth ? item.topZ : topZ;
-          const pathBottomZ = usePathsWithDepth ? item.bottomZ : bottomZ;
+          const pathTopZ = item.topZ;
+          const pathBottomZ = item.bottomZ;
           const pts = path.map((p) => ({ x: p.x, y: p.y }));
           const closed = pts.length >= 3 && Math.abs(pts[0].x - pts[pts.length - 1].x) < 1e-9 && Math.abs(pts[0].y - pts[pts.length - 1].y) < 1e-9;
           const n = closed ? pts.length - 1 : pts.length;
@@ -5772,7 +6663,10 @@ function renderPreview(toolpath, canvas, viewMode = currentPreviewView, cursorCo
           }
         });
       } else {
-        validPaths.forEach((path) => {
+        const drawExtrudedPreviewItem = (item) => {
+          const path = item.path;
+          const pathTopZ = item.topZ;
+          const pathBottomZ = item.bottomZ;
           const pts = path.map((p) => ({ x: p.x, y: p.y }));
           const closed = pts.length >= 3 && Math.abs(pts[0].x - pts[pts.length - 1].x) < 1e-9 && Math.abs(pts[0].y - pts[pts.length - 1].y) < 1e-9;
           const n = closed ? pts.length - 1 : pts.length;
@@ -5783,8 +6677,8 @@ function renderPreview(toolpath, canvas, viewMode = currentPreviewView, cursorCo
             const pt = pts[i];
             const x = pt.x - cx;
             const y = pt.y - cy;
-            const zBottom = (cz - bottomZ) * DEPTH_SCALE;
-            const zTop = (cz - topZ) * DEPTH_SCALE;
+            const zBottom = (cz - pathBottomZ) * DEPTH_SCALE;
+            const zTop = (cz - pathTopZ) * DEPTH_SCALE;
             bottomPoints.push(toCanvas(projectPoint(x, y, zBottom)));
             topPoints.push(toCanvas(projectPoint(x, y, zTop)));
           }
@@ -5807,10 +6701,13 @@ function renderPreview(toolpath, canvas, viewMode = currentPreviewView, cursorCo
             ctx.fill();
             ctx.stroke();
           }
-        });
+        };
+        outsideItems.forEach(drawExtrudedPreviewItem);
+        if (outsideItems.length === 0) {
+          insideItems.forEach(drawExtrudedPreviewItem);
+        }
       }
       ctx.restore();
-    }
     }
   }
 
@@ -6242,14 +7139,470 @@ const MACHINE_SETTINGS_DEFAULTS = {
 };
 
 const LAST_SETTINGS_STORAGE_KEY = "gcode-last-settings";
+const CHAIN_MODE_STORAGE_KEY = "gcode-chain-mode";
+
+/** @type {{ id: string, formState: object, dxfText: string|null }[]} */
+let chainJobSteps = [];
+/** @type {string|null} */
+let chainActiveStepId = null;
+
+/** Formuliervelden die per stap worden opgeslagen. */
+const CHAIN_CAPTURE_FIELD_IDS = [
+  "operation-type", "hole-pattern-layout", "shape", "operation",
+  "circle-diameter", "square-size", "square-preset", "rect-width", "rect-height", "rect-preset",
+  "rounded-corner-radius", "hexagon-height", "ellipse-major", "ellipse-minor",
+  "letter-text", "letter-size", "letter-mode", "letter-orientation",
+  "counterbore-head-diameter", "counterbore-depth", "counterbore-bolt-diameter",
+  "thread-system", "thread-preset", "thread-mill-type", "thread-major-diameter", "thread-pitch",
+  "thread-hole-diameter", "thread-milling-depth",
+  "patterned-holes-preset", "patterned-holes-diameter", "patterned-holes-spacing-x", "patterned-holes-spacing-y",
+  "patterned-holes-count-x", "patterned-holes-count-y",
+  "circular-pattern-holes-count", "circular-pattern-holes-diameter", "circular-pattern-holes-circle-diameter",
+  "circular-pattern-holes-start-angle", "circular-pattern-holes-center-hole", "circular-pattern-holes-center-diameter",
+  "dxf-orientation",
+  "facing-mode", "facing-direction", "facing-finish-mode", "facing-even-spacing",
+  "contour-type", "tabs-enabled", "tab-interval", "tab-width", "tab-height",
+  "tool-diameter", "total-depth", "multiple-depths", "stepdown", "stepover",
+  "finishing-pass-enabled", "finishing-pass-distance", "finishing-pass-speed-override", "finishing-pass-overlap",
+  "feedrate", "spindle-speed", "safe-height", "lead-in-above",
+  "xy-origin", "z-origin", "z-offset", "origin-offset-x", "origin-offset-y",
+  "entry-method", "ramp-angle", "plunge-outside",
+  "spindle-speed-enabled", "mist-coolant-enabled", "flood-coolant-enabled",
+  "mirror-x-enabled", "mirror-y-enabled", "use-arcs-enabled",
+];
+
+/** Baseline-velden (stap 1) die voor latere stappen vergrendeld worden. */
+const CHAIN_BASELINE_FIELD_IDS = [
+  "xy-origin", "z-origin", "z-offset",
+  "tool-diameter", "safe-height", "spindle-speed",
+  "spindle-speed-enabled", "mist-coolant-enabled", "flood-coolant-enabled",
+  "mirror-x-enabled", "mirror-y-enabled", "use-arcs-enabled",
+];
+
+function isChainModeEnabled() {
+  try {
+    return localStorage.getItem(CHAIN_MODE_STORAGE_KEY) === "on";
+  } catch (_) {
+    return false;
+  }
+}
+
+function setChainModeEnabled(enabled) {
+  try {
+    localStorage.setItem(CHAIN_MODE_STORAGE_KEY, enabled ? "on" : "off");
+  } catch (_) {}
+  applyChainModeUI(enabled);
+}
+
+function applyChainModeUI(enabled) {
+  document.body.dataset.chainMode = enabled ? "on" : "off";
+  const bar = document.getElementById("chain-steps-bar");
+  const hint = document.getElementById("chain-baseline-hint");
+  if (bar) bar.classList.toggle("hidden", !enabled);
+  if (hint) hint.classList.toggle("hidden", !enabled || chainJobSteps.length < 2);
+  document.querySelectorAll(".settings-chain-item[data-chain]").forEach((btn) => {
+    btn.setAttribute("aria-pressed", btn.getAttribute("data-chain") === (enabled ? "on" : "off") ? "true" : "false");
+  });
+  if (enabled && chainJobSteps.length === 0) {
+    chainJobSteps.push(createChainStepFromCurrentFormSync());
+    chainActiveStepId = chainJobSteps[0].id;
+  }
+  renderChainStepsBar();
+  updateChainFieldLocks();
+}
+
+function onChainBaselineFieldsChanged() {
+  if (!isChainModeEnabled() || getChainActiveStepIndex() !== 0 || !chainJobSteps[0]) return;
+  chainJobSteps[0].formState = captureFormStateForChain();
+  syncChainBaselineToOtherSteps();
+  renderChainStepsBar();
+  updateChainFieldLocks();
+}
+
+function createChainStepId() {
+  return `step-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function captureFormStateForChain() {
+  /** @type {Record<string, string|boolean|number>} */
+  const fields = {};
+  CHAIN_CAPTURE_FIELD_IDS.forEach((id) => {
+    const el = /** @type {HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement|null} */ (document.getElementById(id));
+    if (!el) return;
+    if (el.type === "checkbox") fields[id] = el.checked;
+    else fields[id] = el.value;
+  });
+  return {
+    fields,
+    stepoverUnit: document.querySelector('input[name="stepover-unit"]:checked')?.value ?? "percent",
+    entryMethod: /** @type {HTMLInputElement|null} */ (document.getElementById("entry-method"))?.value ?? EntryMethod.PLUNGE,
+    plungeOutside: /** @type {HTMLInputElement|null} */ (document.getElementById("plunge-outside"))?.value ?? "off",
+  };
+}
+
+function applyFormStateForChain(formState) {
+  if (!formState?.fields) return;
+  Object.entries(formState.fields).forEach(([id, val]) => {
+    const el = /** @type {HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement|null} */ (document.getElementById(id));
+    if (!el) return;
+    if (el.type === "checkbox") el.checked = !!val;
+    else el.value = String(val);
+  });
+  const stepoverRadio = /** @type {HTMLInputElement|null} */ (
+    document.querySelector(`input[name="stepover-unit"][value="${formState.stepoverUnit || "percent"}"]`)
+  );
+  if (stepoverRadio) {
+    stepoverRadio.checked = true;
+    stepoverRadio.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  const entryHidden = /** @type {HTMLInputElement|null} */ (document.getElementById("entry-method"));
+  const entryVal = formState.entryMethod || EntryMethod.PLUNGE;
+  if (entryHidden) entryHidden.value = entryVal;
+  document.querySelectorAll(".entry-method-btn").forEach((b) => {
+    b.classList.toggle("entry-method-btn--active", b.getAttribute("data-entry") === entryVal);
+  });
+  const plungeHidden = /** @type {HTMLInputElement|null} */ (document.getElementById("plunge-outside"));
+  const plungeVal = formState.plungeOutside || "off";
+  if (plungeHidden) plungeHidden.value = plungeVal;
+  document.querySelectorAll("[data-plunge-outside]").forEach((b) => {
+    b.classList.toggle("entry-method-btn--active", b.getAttribute("data-plunge-outside") === plungeVal);
+  });
+}
+
+function extractBaselineFieldsFromFormState(formState) {
+  /** @type {Record<string, string|boolean>} */
+  const baseline = {};
+  CHAIN_BASELINE_FIELD_IDS.forEach((id) => {
+    if (formState.fields[id] !== undefined) baseline[id] = formState.fields[id];
+  });
+  return baseline;
+}
+
+function applyBaselineFieldsToFormState(formState, baseline) {
+  if (!formState?.fields || !baseline) return formState;
+  CHAIN_BASELINE_FIELD_IDS.forEach((id) => {
+    if (baseline[id] !== undefined) formState.fields[id] = baseline[id];
+  });
+  return formState;
+}
+
+function syncChainBaselineToOtherSteps() {
+  if (chainJobSteps.length < 2) return;
+  const baseline = extractBaselineFieldsFromFormState(chainJobSteps[0].formState);
+  for (let i = 1; i < chainJobSteps.length; i++) {
+    applyBaselineFieldsToFormState(chainJobSteps[i].formState, baseline);
+  }
+}
+
+function getChainActiveStepIndex() {
+  if (!chainActiveStepId) return -1;
+  return chainJobSteps.findIndex((s) => s.id === chainActiveStepId);
+}
+
+function isChainBaselineLocked() {
+  return isChainModeEnabled() && chainJobSteps.length > 0 && getChainActiveStepIndex() > 0;
+}
+
+function getChainLockTargets() {
+  const targets = [
+    document.getElementById("xy-origin")?.closest(".field-row"),
+    document.getElementById("z-origin")?.closest(".field-row"),
+    document.getElementById("z-offset")?.closest(".field-row"),
+    document.getElementById("tool-diameter-row"),
+    document.getElementById("spindle-speed-row"),
+    document.getElementById("safe-height")?.closest(".field-row"),
+    document.getElementById("settings-machine-btn"),
+  ];
+  return targets.filter(Boolean);
+}
+
+function updateChainFieldLocks() {
+  const locked = isChainBaselineLocked();
+  getChainLockTargets().forEach((el) => {
+    el.classList.toggle("chain-locked", locked);
+  });
+  const overlay = document.getElementById("machine-settings-overlay");
+  if (overlay) {
+    overlay.querySelectorAll("input, select, button").forEach((el) => {
+      if (el.id === "machine-settings-close") return;
+      if (locked) {
+        el.setAttribute("data-chain-was-disabled", el.disabled ? "1" : "0");
+        el.disabled = true;
+      } else if (el.hasAttribute("data-chain-was-disabled")) {
+        el.disabled = el.getAttribute("data-chain-was-disabled") === "1";
+        el.removeAttribute("data-chain-was-disabled");
+      }
+    });
+  }
+  const hint = document.getElementById("chain-baseline-hint");
+  if (hint) hint.classList.toggle("hidden", !isChainModeEnabled() || chainJobSteps.length < 2);
+}
+
+function getChainStepToolLabel(formState) {
+  const opCat = formState.fields["operation-type"] ?? OperationTypeCategory.SHAPES;
+  const shape = resolveEffectiveShape(opCat, formState.fields["shape"]);
+  const contourType = normalizeContourType(formState.fields["contour-type"]);
+  const letterMode = formState.fields["letter-mode"] || "outline";
+  const fixed = getEngravingToolDiameterMm(shape, contourType, letterMode);
+  const u = getDisplayUnit();
+  let diaMm;
+  if (fixed != null) diaMm = fixed;
+  else {
+    const baseline = chainJobSteps.length > 0
+      ? extractBaselineFieldsFromFormState(chainJobSteps[0].formState)
+      : null;
+    const toolField = baseline?.["tool-diameter"] ?? formState.fields["tool-diameter"];
+    const raw = toNumber(toolField);
+    diaMm = Number.isFinite(raw) ? toMm(raw, u) : NaN;
+  }
+  if (!Number.isFinite(diaMm)) return "";
+  const val = u === "inch" ? fromMm(diaMm, "inch").toFixed(3) : fromMm(diaMm, "mm").toFixed(1);
+  return t("chain.toolDiameter", { val });
+}
+
+function getChainStepOperationLabel(formState) {
+  const saved = captureFormStateForChain();
+  applyFormStateForChain(formState);
+  const raw = readInputsFromForm();
+  applyFormStateForChain(saved);
+  if (chainActiveStepId) {
+    const active = chainJobSteps.find((s) => s.id === chainActiveStepId);
+    if (active) applyFormStateForChain(active.formState);
+  }
+  return getGcodeOperationLabel(raw);
+}
+
+function createChainStepFromCurrentFormSync() {
+  return {
+    id: createChainStepId(),
+    formState: captureFormStateForChain(),
+    dxfText: null,
+    dxfFileName: null,
+  };
+}
+
+async function readDxfTextFromFileInput() {
+  const dxfFileInput = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-file"));
+  const file = dxfFileInput?.files?.[0];
+  if (!file) return { text: null, name: null };
+  const text = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result ?? ""));
+    r.onerror = () => reject(new Error("File read failed"));
+    r.readAsText(file);
+  });
+  return { text, name: file.name };
+}
+
+async function saveActiveChainStepFromForm() {
+  const idx = getChainActiveStepIndex();
+  if (idx < 0 || !chainJobSteps[idx]) return;
+  chainJobSteps[idx].formState = captureFormStateForChain();
+  const opCat = chainJobSteps[idx].formState.fields["operation-type"];
+  const shape = resolveEffectiveShape(opCat, chainJobSteps[idx].formState.fields["shape"]);
+  if (shape === ShapeType.DXF) {
+    const { text, name } = await readDxfTextFromFileInput();
+    if (text) {
+      chainJobSteps[idx].dxfText = text;
+      chainJobSteps[idx].dxfFileName = name;
+    }
+  }
+  if (idx === 0) syncChainBaselineToOtherSteps();
+}
+
+function loadChainStepToForm(stepId) {
+  const step = chainJobSteps.find((s) => s.id === stepId);
+  if (!step) return;
+  chainActiveStepId = stepId;
+  const idx = getChainActiveStepIndex();
+  if (idx > 0 && chainJobSteps[0]) {
+    applyBaselineFieldsToFormState(step.formState, extractBaselineFieldsFromFormState(chainJobSteps[0].formState));
+  }
+  applyFormStateForChain(step.formState);
+  if (typeof updateUIForOperationTypeAndShape === "function") updateUIForOperationTypeAndShape();
+  if (typeof updateContourTypeVisibility === "function") updateContourTypeVisibility();
+  if (typeof updateStepoverHint === "function") updateStepoverHint();
+  if (typeof updateToolDiameterVisibility === "function") updateToolDiameterVisibility();
+  updateChainFieldLocks();
+  renderChainStepsBar();
+  if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
+}
+
+async function selectChainStep(stepId) {
+  if (chainActiveStepId && chainActiveStepId !== stepId) {
+    await saveActiveChainStepFromForm();
+  }
+  loadChainStepToForm(stepId);
+}
+
+async function addChainStepFromForm() {
+  await saveActiveChainStepFromForm();
+  const step = createChainStepFromCurrentFormSync();
+  if (chainJobSteps.length > 0) {
+    const baseline = extractBaselineFieldsFromFormState(chainJobSteps[0].formState);
+    applyBaselineFieldsToFormState(step.formState, baseline);
+  }
+  const opCat = step.formState.fields["operation-type"];
+  const shape = resolveEffectiveShape(opCat, step.formState.fields["shape"]);
+  if (shape === ShapeType.DXF) {
+    const { text, name } = await readDxfTextFromFileInput();
+    if (text) {
+      step.dxfText = text;
+      step.dxfFileName = name;
+    }
+  }
+  chainJobSteps.push(step);
+  chainActiveStepId = step.id;
+  loadChainStepToForm(step.id);
+}
+
+async function removeChainStep(stepId) {
+  const idx = chainJobSteps.findIndex((s) => s.id === stepId);
+  if (idx < 0) return;
+  chainJobSteps.splice(idx, 1);
+  if (chainJobSteps.length === 0) {
+    chainActiveStepId = null;
+    if (isChainModeEnabled()) {
+      const step = createChainStepFromCurrentFormSync();
+      chainJobSteps.push(step);
+      chainActiveStepId = step.id;
+    }
+  } else if (chainActiveStepId === stepId) {
+    chainActiveStepId = chainJobSteps[Math.min(idx, chainJobSteps.length - 1)].id;
+    loadChainStepToForm(chainActiveStepId);
+  }
+  syncChainBaselineToOtherSteps();
+  renderChainStepsBar();
+  updateChainFieldLocks();
+  if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
+}
+
+function renderChainStepsBar() {
+  const list = document.getElementById("chain-steps-list");
+  if (!list) return;
+  list.innerHTML = "";
+  chainJobSteps.forEach((step, index) => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "chain-step-chip-wrapper";
+
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chain-step-chip" + (step.id === chainActiveStepId ? " chain-step-chip--active" : "");
+    chip.dataset.stepId = step.id;
+    const num = document.createElement("span");
+    num.className = "chain-step-chip-num";
+    num.textContent = String(index + 1);
+    const label = document.createElement("span");
+    label.className = "chain-step-chip-label";
+    label.textContent = getChainStepOperationLabel(step.formState);
+    const tool = document.createElement("span");
+    tool.className = "chain-step-chip-tool";
+    tool.textContent = getChainStepToolLabel(step.formState);
+    chip.appendChild(num);
+    chip.appendChild(label);
+    chip.appendChild(tool);
+    chip.addEventListener("click", () => {
+      selectChainStep(step.id);
+    });
+    wrapper.appendChild(chip);
+
+    if (chainJobSteps.length > 1) {
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "chain-step-remove";
+      removeBtn.setAttribute("aria-label", t("chain.removeStep"));
+      removeBtn.textContent = "×";
+      removeBtn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        removeChainStep(step.id);
+      });
+      wrapper.appendChild(removeBtn);
+    }
+
+    list.appendChild(wrapper);
+  });
+}
+
+function applyChainBaselineToRaw(raw, baselineFields) {
+  if (!baselineFields) return raw;
+  const displayUnit = getDisplayUnit();
+  raw.originParams = {
+    ...raw.originParams,
+    xyOrigin: String(baselineFields["xy-origin"] ?? raw.originParams.xyOrigin),
+    zOrigin: String(baselineFields["z-origin"] ?? raw.originParams.zOrigin),
+    zOffset: toMm(toNumber(baselineFields["z-offset"]) || 0, displayUnit),
+  };
+  const toolRaw = toNumber(baselineFields["tool-diameter"]);
+  if (Number.isFinite(toolRaw) && toolRaw > 0 && !isEngravingContourMode(raw.shape, raw.contourType, raw.letterMode)) {
+    raw.cutParams.toolDiameter = toMm(toolRaw, displayUnit);
+  }
+  raw.cutParams.safeHeight = toMm(toNumber(baselineFields["safe-height"]) || raw.cutParams.safeHeight, displayUnit);
+  raw.cutParams.spindleSpeedEnabled = !!baselineFields["spindle-speed-enabled"];
+  const spindle = toNumber(baselineFields["spindle-speed"]);
+  raw.cutParams.spindleSpeed = raw.cutParams.spindleSpeedEnabled && Number.isFinite(spindle) && spindle > 0 ? spindle : null;
+  raw.cutParams.mistCoolantEnabled = !!baselineFields["mist-coolant-enabled"];
+  raw.cutParams.floodCoolantEnabled = !!baselineFields["flood-coolant-enabled"];
+  raw.cutParams.mirrorXEnabled = !!baselineFields["mirror-x-enabled"];
+  raw.cutParams.mirrorYEnabled = !!baselineFields["mirror-y-enabled"];
+  raw.cutParams.useArcsEnabled = !!baselineFields["use-arcs-enabled"];
+  return raw;
+}
+
+async function prepareRawFromChainStep(step, baselineFields) {
+  applyFormStateForChain(step.formState);
+  let raw = readInputsFromForm();
+  if (baselineFields) raw = applyChainBaselineToRaw(raw, baselineFields);
+  if (raw.shape === ShapeType.DXF) {
+    if (!step.dxfText) {
+      throw new Error(t("error.dxfNoFile"));
+    }
+    const contours = parseDxfToContours(step.dxfText);
+    const dxfOrientation = Number(raw.shapeParams.dxfOrientation) || 0;
+    let dxfContours = dxfOrientation !== 0
+      ? rotatePathsAroundOrigin(contours, dxfOrientation)
+      : contours;
+    raw.dxfContours = applyOriginToDxfContours(dxfContours, raw.originParams.xyOrigin);
+  }
+  return raw;
+}
+
+function mergeChainToolpaths(stepResults) {
+  /** @type {ToolpathMove[]} */
+  const moves = [];
+  stepResults.forEach((r) => {
+    if (r.toolpath?.moves?.length) moves.push(...r.toolpath.moves);
+  });
+  const last = stepResults[stepResults.length - 1]?.toolpath;
+
+  // Grijs gefreesd-resultaat in preview: alleen betrouwbaar bij enkele stap.
+  if (stepResults.length > 1) {
+    return { moves, toolDiameter: last?.toolDiameter };
+  }
+
+  if (!last) return { moves };
+
+  return {
+    moves,
+    resultPaths: last.resultPaths,
+    resultPathsWithDepth: last.resultPathsWithDepth,
+    resultTotalDepth: last.resultTotalDepth,
+    resultBottomZ: last.resultBottomZ,
+    resultContourInside: last.resultContourInside,
+    resultBounds: last.resultBounds,
+    toolDiameter: last.toolDiameter,
+  };
+}
 
 /** Slaat de huidige machine-instellingen op in localStorage. */
 function saveLastSettings() {
   try {
     const unit = getDisplayUnit();
+    const previewSpeedSliderEl = /** @type {HTMLInputElement | null} */ (document.getElementById("preview-speed"));
+    const previewSpeedSliderValue = previewSpeedSliderEl ? Number(previewSpeedSliderEl.value) : 0;
     const data = {
       version: 1,
       unit,
+      previewSpeedSliderValue: Number.isFinite(previewSpeedSliderValue) ? previewSpeedSliderValue : 0,
       feedrate: toNumber(document.getElementById("feedrate")?.value),
       spindleSpeedEnabled: /** @type {HTMLInputElement} */ (document.getElementById("spindle-speed-enabled"))?.checked ?? false,
       spindleSpeed: toNumber(document.getElementById("spindle-speed")?.value),
@@ -6370,6 +7723,20 @@ function setupUI() {
   setupHoverSubmenu("theme-submenu-trigger", "theme-submenu");
   setupHoverSubmenu("importexport-submenu-trigger", "importexport-submenu");
   setupHoverSubmenu("mode-submenu-trigger", "mode-submenu");
+  setupHoverSubmenu("chain-submenu-trigger", "chain-submenu");
+
+  document.querySelectorAll(".settings-chain-item[data-chain]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setChainModeEnabled(btn.getAttribute("data-chain") === "on");
+    });
+  });
+
+  const chainAddStepBtn = document.getElementById("chain-add-step-btn");
+  if (chainAddStepBtn) {
+    chainAddStepBtn.addEventListener("click", () => {
+      addChainStepFromForm();
+    });
+  }
 
   // Display mode (simple / advanced)
   function applyDisplayMode(mode) {
@@ -6447,6 +7814,7 @@ function setupUI() {
   const LENGTH_INPUT_IDS = [
     "circle-diameter", "square-size", "rect-width", "rect-height", "rounded-corner-radius", "ellipse-major", "ellipse-minor", "letter-size",
     "counterbore-head-diameter", "counterbore-depth", "counterbore-bolt-diameter",
+    "thread-major-diameter", "thread-pitch", "thread-hole-diameter", "thread-milling-depth",
     "patterned-holes-diameter", "patterned-holes-spacing-x", "patterned-holes-spacing-y",
     "tab-interval", "tab-width", "tab-height",
     "tool-diameter", "total-depth", "stepdown", "stepover", "feedrate", "safe-height", "lead-in-above", "z-offset", "origin-offset-x", "origin-offset-y", "finishing-pass-overlap",
@@ -6465,6 +7833,7 @@ function setupUI() {
     "ellipse-major": 1, "ellipse-minor": 1, "letter-size": 1,
     "patterned-holes-diameter": 0.1, "patterned-holes-spacing-x": 1, "patterned-holes-spacing-y": 1,
     "counterbore-head-diameter": 1, "counterbore-depth": 0.5, "counterbore-bolt-diameter": 0.5,
+    "thread-major-diameter": 0.5, "thread-pitch": 0.1, "thread-hole-diameter": 0.5, "thread-milling-depth": 0.5,
     "tab-interval": 5, "tab-width": 1, "tab-height": 0.5,
     "tool-diameter": 1, "total-depth": 0.5, "stepdown": 0.5, "feedrate": 50,
     "safe-height": 1, "lead-in-above": 0.5, "z-offset": 0.5, "origin-offset-x": 0.5, "origin-offset-y": 0.5,
@@ -6491,6 +7860,10 @@ function setupUI() {
     "counterbore-head-diameter": 0.5,
     "counterbore-depth": 0.125,
     "counterbore-bolt-diameter": 0.25,
+    "thread-major-diameter": 0.25,
+    "thread-pitch": 0.004,
+    "thread-hole-diameter": 0.2,
+    "thread-milling-depth": 0.375,
     "tab-interval": 1.5,
     "tab-width": 0.25,
     "tab-height": 0.04,
@@ -6638,6 +8011,17 @@ function setupUI() {
       const spindleCb = document.getElementById("spindle-speed-enabled");
       if (spindleRow && spindleCb) {
         spindleRow.classList.toggle("hidden", !(/** @type {HTMLInputElement} */ (spindleCb)).checked);
+      }
+      const storedPreviewSpeedSliderValue = Number(data.previewSpeedSliderValue);
+      if (Number.isFinite(storedPreviewSpeedSliderValue)) {
+        const normalized = Math.max(0, Math.min(1, storedPreviewSpeedSliderValue));
+        playbackSpeedMultiplier = speedSliderToMultiplier(normalized);
+      }
+      if (speedSlider) {
+        speedSlider.value = String(speedMultiplierToSlider(playbackSpeedMultiplier));
+      }
+      if (speedValueEl) {
+        speedValueEl.textContent = formatMultiplierForDisplay(playbackSpeedMultiplier);
       }
     } catch (_) {}
   }
@@ -6891,7 +8275,56 @@ function setupUI() {
 
   function getEffectiveShape() {
     const opType = operationTypeSelect?.value ?? OperationTypeCategory.SHAPES;
-    return opType === OperationTypeCategory.SHAPES ? (shapeSelect?.value ?? ShapeType.CIRCLE) : opType;
+    return resolveEffectiveShape(opType, shapeSelect?.value ?? ShapeType.CIRCLE);
+  }
+
+  function updateFacingEvenSpacingHint() {
+    const hintEl = document.getElementById("facing-even-spacing-hint");
+    if (!hintEl) return;
+    const evenCheckbox = /** @type {HTMLInputElement | null} */ (document.getElementById("facing-even-spacing"));
+    const showFacing = getEffectiveShape() === ShapeType.FACING;
+    const evenOn = !!evenCheckbox?.checked && getDisplayMode() !== "simple";
+    if (!showFacing || !evenOn) {
+      hintEl.textContent = "";
+      return;
+    }
+    const displayUnit = getDisplayUnit();
+    const width = toMm(toNumber(/** @type {HTMLInputElement} */ (document.getElementById("rect-width"))?.value), displayUnit);
+    const height = toMm(toNumber(/** @type {HTMLInputElement} */ (document.getElementById("rect-height"))?.value), displayUnit);
+    const toolD = toMm(toNumber(/** @type {HTMLInputElement} */ (document.getElementById("tool-diameter"))?.value), displayUnit);
+    const facingMode = /** @type {HTMLSelectElement} */ (document.getElementById("facing-mode"))?.value ?? "full";
+    const facingDir = /** @type {HTMLSelectElement} */ (document.getElementById("facing-direction"))?.value ?? "x";
+    if (!Number.isFinite(width) || !Number.isFinite(height) || !Number.isFinite(toolD) || toolD <= 0) {
+      hintEl.textContent = "";
+      return;
+    }
+    const geom = getFacingEffectiveGeometry(ShapeType.RECTANGLE, { width, height, cornerRadius: 0 }, toolD / 2, facingMode);
+    if (!geom) {
+      hintEl.textContent = "";
+      return;
+    }
+    const limit = facingDir === "y" ? geom.hwEff : geom.hhEff;
+    const stepoverUnit = /** @type {HTMLInputElement} */ (document.querySelector('input[name="stepover-unit"]:checked'))?.value ?? "percent";
+    const stepoverVal = toNumber(/** @type {HTMLInputElement} */ (document.getElementById("stepover"))?.value);
+    let stepoverMm = stepoverUnit === "percent" && Number.isFinite(stepoverVal)
+      ? (stepoverVal / 100) * toolD
+      : stepoverUnit === "mm"
+        ? toMm(stepoverVal, displayUnit)
+        : NaN;
+    if (!Number.isFinite(stepoverMm) || stepoverMm <= 0) {
+      hintEl.textContent = "";
+      return;
+    }
+    stepoverMm = Math.min(stepoverMm, toolD);
+    const actualMm = computeEvenFacingStepover(limit, stepoverMm);
+    if (actualMm == null) {
+      hintEl.textContent = "";
+      return;
+    }
+    const showVal = displayUnit === "inch" ? fromMm(actualMm, displayUnit).toFixed(3) : fromMm(actualMm, displayUnit).toFixed(2);
+    hintEl.textContent = displayUnit === "inch"
+      ? t("form.facingEvenSpacingStepoverHintIn", { val: showVal })
+      : t("form.facingEvenSpacingStepoverHintMm", { val: showVal });
   }
 
   function updateUIForOperationTypeAndShape() {
@@ -6909,6 +8342,11 @@ function setupUI() {
       }
     });
 
+    const holePatternLayoutRow = document.getElementById("hole-pattern-layout-row");
+    if (holePatternLayoutRow) {
+      holePatternLayoutRow.classList.toggle("hidden", opType !== OperationTypeCategory.HOLE_PATTERN);
+    }
+
     document
       .querySelectorAll(".shape-field")
       .forEach((el) => el.classList.add("hidden"));
@@ -6921,6 +8359,7 @@ function setupUI() {
       [ShapeType.ELLIPSE]: ".shape-ellipse",
       [ShapeType.LETTERS]: ".shape-letters",
       [ShapeType.COUNTERBORE_BOLT]: ".shape-counterbore-bolt",
+      [ShapeType.THREAD_MILLING]: ".shape-thread-milling",
       [ShapeType.PATTERNED_HOLES]: ".shape-patterned-holes",
       [ShapeType.CIRCULAR_PATTERN_HOLES]: ".shape-circular-pattern-holes",
       [ShapeType.DXF]: ".shape-dxf",
@@ -6931,11 +8370,16 @@ function setupUI() {
         .querySelectorAll(selector)
         .forEach((el) => el.classList.remove("hidden"));
     }
+    if (selected === ShapeType.SQUARE || selected === ShapeType.RECTANGLE) {
+      document
+        .querySelectorAll(".shape-rounded-corners")
+        .forEach((el) => el.classList.remove("hidden"));
+    }
 
     const operationRow = document.getElementById("operation-row");
     const contourOnlyElems = document.querySelectorAll(".contour-only");
     const facingOnlyElems = document.querySelectorAll(".facing-only");
-    if (selected === ShapeType.LETTERS || selected === ShapeType.COUNTERBORE_BOLT || selected === ShapeType.PATTERNED_HOLES) {
+    if (selected === ShapeType.LETTERS || selected === ShapeType.COUNTERBORE_BOLT || selected === ShapeType.THREAD_MILLING || selected === ShapeType.PATTERNED_HOLES) {
       if (operationRow) operationRow.classList.add("hidden");
       contourOnlyElems.forEach((el) => el.classList.add("hidden"));
       facingOnlyElems.forEach((el) => el.classList.add("hidden"));
@@ -6966,6 +8410,11 @@ function setupUI() {
         plungeOutsideInput.value = "off";
         plungeOutsideButtons.forEach((b) => b.classList.toggle("entry-method-btn--active", b.dataset.plungeOutside === "off"));
       }
+      if (previous !== ShapeType.DXF) {
+        const u = getDisplayUnit();
+        const toolEl = /** @type {HTMLInputElement | null} */ (document.getElementById("tool-diameter"));
+        if (toolEl) toolEl.value = String(fromMm(DXF_ENGRAVING_TOOL_DIAMETER_MM, u));
+      }
       updateContourTypeVisibility();
     } else if (selected === ShapeType.FACING) {
       if (operationRow) operationRow.classList.add("hidden");
@@ -6978,8 +8427,10 @@ function setupUI() {
         const toolEl = /** @type {HTMLInputElement | null} */ (document.getElementById("tool-diameter"));
         const totalDepthEl = /** @type {HTMLInputElement | null} */ (document.getElementById("total-depth"));
         const stepoverEl = /** @type {HTMLInputElement | null} */ (document.getElementById("stepover"));
+        const facingFinishModeEl = /** @type {HTMLSelectElement | null} */ (document.getElementById("facing-finish-mode"));
         if (toolEl) toolEl.value = String(fromMm(25, u));
         if (totalDepthEl) totalDepthEl.value = String(fromMm(1, u));
+        if (facingFinishModeEl) facingFinishModeEl.value = "off";
         // default stepover = 90% for facing
         const percentRadio = /** @type {HTMLInputElement | null} */ (document.querySelector('input[name="stepover-unit"][value="percent"]'));
         if (percentRadio) {
@@ -7009,9 +8460,32 @@ function setupUI() {
     if (xyOriginSelect) {
       if (selected === ShapeType.SQUARE || selected === ShapeType.RECTANGLE || selected === ShapeType.FACING || selected === ShapeType.LETTERS || selected === ShapeType.PATTERNED_HOLES || selected === ShapeType.DXF) {
         xyOriginSelect.value = XYOrigin.BOTTOM_LEFT;
-      } else if (selected === ShapeType.CIRCLE || selected === ShapeType.ELLIPSE || selected === ShapeType.HEXAGON || selected === ShapeType.COUNTERBORE_BOLT || selected === ShapeType.CIRCULAR_PATTERN_HOLES) {
+      } else if (selected === ShapeType.CIRCLE || selected === ShapeType.ELLIPSE || selected === ShapeType.HEXAGON || selected === ShapeType.COUNTERBORE_BOLT || selected === ShapeType.THREAD_MILLING || selected === ShapeType.CIRCULAR_PATTERN_HOLES) {
         xyOriginSelect.value = XYOrigin.CENTER;
       }
+    }
+
+    const totalDepthRow = document.getElementById("total-depth-row");
+    const multipleDepthsRow = document.getElementById("multiple-depths-row");
+    const stepoverRowEl = document.getElementById("stepover-input-wrapper")?.closest(".field-row") ?? null;
+    if (totalDepthRow) totalDepthRow.classList.toggle("hidden", selected === ShapeType.THREAD_MILLING);
+    if (multipleDepthsRow) multipleDepthsRow.classList.toggle("hidden", selected === ShapeType.THREAD_MILLING);
+    if (stepoverRowEl) stepoverRowEl.classList.toggle("hidden", selected === ShapeType.THREAD_MILLING);
+
+    // Insteek-veld: zichtbaarheid via updateEntryMethodForEngraving (gravure + draadfrezen).
+
+    if (selected === ShapeType.THREAD_MILLING && previous !== ShapeType.THREAD_MILLING) {
+      const u = getDisplayUnit();
+      const toolEl = /** @type {HTMLInputElement | null} */ (document.getElementById("tool-diameter"));
+      if (toolEl) toolEl.value = String(fromMm(6, u));
+      const systemEl = /** @type {HTMLSelectElement | null} */ (document.getElementById("thread-system"));
+      if (systemEl) systemEl.value = "metric";
+      populateThreadPresetOptions();
+      const presetEl = /** @type {HTMLSelectElement | null} */ (document.getElementById("thread-preset"));
+      if (presetEl) presetEl.value = "M6";
+      const typeEl = /** @type {HTMLSelectElement | null} */ (document.getElementById("thread-mill-type"));
+      if (typeEl) typeEl.value = ThreadMillType.INTERNAL;
+      applyThreadPreset("M6");
     }
 
     if (selected === ShapeType.LETTERS) {
@@ -7021,6 +8495,10 @@ function setupUI() {
 
     updateCircularPatternHolesCenterRowVisibility();
     updateToolDiameterVisibility();
+    updateThreadMillTypeVisibility();
+    updateContourTypeVisibility();
+    if (typeof updateStepoverHint === "function") updateStepoverHint();
+    updateChainFieldLocks();
   }
 
   // Track last effective shape inside closure (static-like property)
@@ -7036,6 +8514,21 @@ function setupUI() {
 
   operationTypeSelect?.addEventListener("change", updateUIForOperationTypeAndShape);
   shapeSelect?.addEventListener("change", updateUIForOperationTypeAndShape);
+
+  const holePatternLayoutSelect = document.getElementById("hole-pattern-layout");
+  holePatternLayoutSelect?.addEventListener("change", updateUIForOperationTypeAndShape);
+
+  if (operationTypeSelect) {
+    const legacyOp = operationTypeSelect.value;
+    if (legacyOp === "circular_pattern_holes" || legacyOp === "patterned_holes") {
+      operationTypeSelect.value = OperationTypeCategory.HOLE_PATTERN;
+      if (holePatternLayoutSelect) {
+        holePatternLayoutSelect.value = legacyOp === "circular_pattern_holes"
+          ? HolePatternLayout.CIRCULAR
+          : HolePatternLayout.GRID;
+      }
+    }
+  }
 
   const circularPatternHolesCenterCb = document.getElementById("circular-pattern-holes-center-hole");
   if (circularPatternHolesCenterCb) {
@@ -7128,6 +8621,111 @@ function setupUI() {
   if (patternedHolesSpacingXInput) patternedHolesSpacingXInput.addEventListener("input", syncPatternedHolesPresetFromInputs);
   if (patternedHolesSpacingYInput) patternedHolesSpacingYInput.addEventListener("input", syncPatternedHolesPresetFromInputs);
 
+  // Thread milling presets (metric / inch + M5, M6, etc.)
+  const threadSystemSelect = /** @type {HTMLSelectElement | null} */ (document.getElementById("thread-system"));
+  const threadPresetSelect = /** @type {HTMLSelectElement | null} */ (document.getElementById("thread-preset"));
+  const threadMajorInput = document.getElementById("thread-major-diameter");
+  const threadPitchInput = document.getElementById("thread-pitch");
+  const threadHoleInput = document.getElementById("thread-hole-diameter");
+  const threadDepthInput = document.getElementById("thread-milling-depth");
+
+  const threadMillTypeSelect = /** @type {HTMLSelectElement | null} */ (document.getElementById("thread-mill-type"));
+
+  function updateThreadMillTypeVisibility() {
+    const isThread = getEffectiveShape() === ShapeType.THREAD_MILLING;
+    const isInternal = (threadMillTypeSelect?.value || ThreadMillType.INTERNAL) === ThreadMillType.INTERNAL;
+    document.querySelectorAll(".thread-internal-only").forEach((el) => {
+      el.classList.toggle("hidden", !isThread || !isInternal);
+    });
+  }
+
+  function populateThreadPresetOptions() {
+    if (!threadPresetSelect || !threadSystemSelect) return;
+    const system = threadSystemSelect.value || "metric";
+    const presets = THREAD_PRESETS[system] || {};
+    const prev = threadPresetSelect.value;
+    threadPresetSelect.innerHTML = "";
+    const noneOpt = document.createElement("option");
+    noneOpt.value = "";
+    noneOpt.setAttribute("data-i18n", "form.presetsNone");
+    noneOpt.textContent = t("form.presetsNone");
+    threadPresetSelect.appendChild(noneOpt);
+    Object.keys(presets).forEach((key) => {
+      const opt = document.createElement("option");
+      opt.value = key;
+      opt.textContent = key;
+      threadPresetSelect.appendChild(opt);
+    });
+    if (prev && presets[prev]) {
+      threadPresetSelect.value = prev;
+    } else {
+      threadPresetSelect.value = "";
+    }
+  }
+
+  function applyThreadPreset(presetKey) {
+    if (!threadSystemSelect) return;
+    const system = threadSystemSelect.value || "metric";
+    const spec = presetKey ? THREAD_PRESETS[system]?.[presetKey] : null;
+    if (!spec) return;
+    const u = getDisplayUnit();
+    if (threadMajorInput) /** @type {HTMLInputElement} */ (threadMajorInput).value = String(fromMm(spec.majorDia, u));
+    if (threadPitchInput) /** @type {HTMLInputElement} */ (threadPitchInput).value = String(fromMm(spec.pitch, u));
+    if (threadHoleInput && (threadMillTypeSelect?.value || ThreadMillType.INTERNAL) === ThreadMillType.INTERNAL) {
+      /** @type {HTMLInputElement} */ (threadHoleInput).value = String(fromMm(spec.holeDia, u));
+    }
+    if (threadDepthInput) /** @type {HTMLInputElement} */ (threadDepthInput).value = String(fromMm(spec.defaultDepth, u));
+  }
+
+  function syncThreadPresetFromInputs() {
+    if (!threadPresetSelect || !threadSystemSelect || !threadMajorInput || !threadPitchInput || !threadHoleInput || !threadDepthInput) return;
+    const system = threadSystemSelect.value || "metric";
+    const presets = THREAD_PRESETS[system] || {};
+    const u = getDisplayUnit();
+    const major = toMm(parseFloat(/** @type {HTMLInputElement} */ (threadMajorInput).value), u);
+    const pitch = toMm(parseFloat(/** @type {HTMLInputElement} */ (threadPitchInput).value), u);
+    const hole = toMm(parseFloat(/** @type {HTMLInputElement} */ (threadHoleInput).value), u);
+    const depth = toMm(parseFloat(/** @type {HTMLInputElement} */ (threadDepthInput).value), u);
+    const isInternal = (threadMillTypeSelect?.value || ThreadMillType.INTERNAL) === ThreadMillType.INTERNAL;
+    const tol = 0.02;
+    let match = "";
+    for (const [key, spec] of Object.entries(presets)) {
+      const majorOk = Math.abs(major - spec.majorDia) < tol;
+      const pitchOk = Math.abs(pitch - spec.pitch) < tol;
+      const depthOk = Math.abs(depth - spec.defaultDepth) < tol;
+      const holeOk = !isInternal || Math.abs(hole - spec.holeDia) < tol;
+      if (majorOk && pitchOk && depthOk && holeOk) {
+        match = key;
+        break;
+      }
+    }
+    threadPresetSelect.value = match;
+  }
+
+  if (threadMillTypeSelect) {
+    threadMillTypeSelect.addEventListener("change", () => {
+      updateThreadMillTypeVisibility();
+      syncThreadPresetFromInputs();
+      if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
+    });
+  }
+  if (threadSystemSelect) {
+    threadSystemSelect.addEventListener("change", () => {
+      populateThreadPresetOptions();
+      threadPresetSelect.value = "";
+    });
+  }
+  if (threadPresetSelect) {
+    threadPresetSelect.addEventListener("change", () => {
+      const val = threadPresetSelect.value;
+      if (val) applyThreadPreset(val);
+    });
+  }
+  [threadMajorInput, threadPitchInput, threadDepthInput].forEach((el) => {
+    if (el) el.addEventListener("input", syncThreadPresetFromInputs);
+  });
+  populateThreadPresetOptions();
+
   // Patterned holes: toon totale horizontale en verticale afstand als hint (los bij X en Y)
   const patternedHolesTotalHintX = document.getElementById("patterned-holes-total-hint-x");
   const patternedHolesTotalHintY = document.getElementById("patterned-holes-total-hint-y");
@@ -7167,32 +8765,93 @@ function setupUI() {
   const letterModeSelect = /** @type {HTMLSelectElement} */ (document.getElementById("letter-mode"));
   const toolDiameterRow = document.getElementById("tool-diameter-row");
   const toolDiameterOutlineHint = document.getElementById("tool-diameter-outline-hint");
+  const toolDiameterThreadHint = document.getElementById("tool-diameter-thread-hint");
   function updateToolDiameterVisibility() {
-    const isLettersOutline =
-      getEffectiveShape() === ShapeType.LETTERS &&
-      (letterModeSelect?.value || "outline") === "outline";
+    const shape = getEffectiveShape();
+    const contourType = normalizeContourType(
+      /** @type {HTMLSelectElement | null} */ (document.getElementById("contour-type"))?.value
+    );
+    const isEngravingNoToolD = isEngravingContourMode(
+      shape,
+      contourType,
+      letterModeSelect?.value || "outline"
+    );
+    const isThreadMilling = shape === ShapeType.THREAD_MILLING;
     if (toolDiameterRow) {
-      if (isLettersOutline) {
+      if (isEngravingNoToolD) {
         toolDiameterRow.classList.add("hidden");
       } else {
         toolDiameterRow.classList.remove("hidden");
       }
     }
     if (toolDiameterOutlineHint) {
-      if (isLettersOutline) {
-        toolDiameterOutlineHint.classList.remove("hidden");
-      } else {
-        toolDiameterOutlineHint.classList.add("hidden");
-      }
+      toolDiameterOutlineHint.classList.toggle("hidden", !isEngravingNoToolD);
+    }
+    if (toolDiameterThreadHint) {
+      toolDiameterThreadHint.classList.toggle("hidden", !isThreadMilling);
     }
     const toolDInput = /** @type {HTMLInputElement} */ (document.getElementById("tool-diameter"));
     if (toolDInput) {
-      toolDInput.disabled = !!isLettersOutline;
+      toolDInput.disabled = !!isEngravingNoToolD;
       toolDInput.removeAttribute("required");
-      if (!isLettersOutline) toolDInput.setAttribute("required", "");
+      if (!isEngravingNoToolD) toolDInput.setAttribute("required", "");
+    }
+    updateEntryMethodForEngraving();
+  }
+  function updateEntryMethodForEngraving() {
+    const shape = getEffectiveShape();
+    const contourType = normalizeContourType(
+      /** @type {HTMLSelectElement | null} */ (document.getElementById("contour-type"))?.value
+    );
+    const forcePlunge = isEngravingContourMode(shape, contourType, letterModeSelect?.value || "outline");
+    const hideForThread = shape === ShapeType.THREAD_MILLING;
+    const entrySettingsFieldset = document.getElementById("entry-settings-fieldset");
+    if (entrySettingsFieldset) {
+      entrySettingsFieldset.classList.toggle("hidden", forcePlunge || hideForThread);
+    }
+    if (forcePlunge) {
+      if (entryMethodInput) entryMethodInput.value = EntryMethod.PLUNGE;
+      entryButtons.forEach((b) => {
+        if (b.dataset.entry === EntryMethod.RAMP) {
+          b.classList.remove("entry-method-btn--active");
+          b.disabled = true;
+        } else if (b.dataset.entry === EntryMethod.PLUNGE) {
+          b.classList.add("entry-method-btn--active");
+          b.disabled = false;
+        }
+      });
+      if (rampSettings) rampSettings.classList.add("hidden");
+      if (typeof updateRampInputsDisabled === "function") updateRampInputsDisabled();
+    } else if (!hideForThread) {
+      entryButtons.forEach((b) => {
+        if (b.dataset.entry === EntryMethod.RAMP || b.dataset.entry === EntryMethod.PLUNGE) {
+          b.disabled = false;
+        }
+      });
     }
   }
-  if (letterModeSelect) letterModeSelect.addEventListener("change", updateToolDiameterVisibility);
+  if (letterModeSelect) {
+    letterModeSelect.addEventListener("change", () => {
+      updateToolDiameterVisibility();
+      updateEntryMethodForEngraving();
+    });
+  }
+  const contourTypeSelectForToolD = /** @type {HTMLSelectElement | null} */ (document.getElementById("contour-type"));
+  function applyDxfEngravingToolDefault() {
+    const shape = getEffectiveShape();
+    if (shape !== ShapeType.DXF) return;
+    const contourType = normalizeContourType(contourTypeSelectForToolD?.value);
+    if (contourType !== "engraving") return;
+    const u = getDisplayUnit();
+    const toolEl = /** @type {HTMLInputElement | null} */ (document.getElementById("tool-diameter"));
+    if (toolEl) toolEl.value = String(fromMm(DXF_ENGRAVING_TOOL_DIAMETER_MM, u));
+  }
+  if (contourTypeSelectForToolD) {
+    contourTypeSelectForToolD.addEventListener("change", () => {
+      applyDxfEngravingToolDefault();
+      updateToolDiameterVisibility();
+    });
+  }
   updateToolDiameterVisibility();
 
   function updateContourTypeVisibility() {
@@ -7203,7 +8862,9 @@ function setupUI() {
 
     const contourTypeSelect = /** @type {HTMLSelectElement} */ (document.getElementById("contour-type"));
     const outsideOpt = document.getElementById("contour-type-outside");
+    const engravingOpt = document.getElementById("contour-type-engraving");
     const isCircularPatternHoles = shape === ShapeType.CIRCULAR_PATTERN_HOLES;
+    const isDxf = shape === ShapeType.DXF;
     if (outsideOpt) {
       if (showContour && isCircularPatternHoles) {
         outsideOpt.setAttribute("hidden", "");
@@ -7216,9 +8877,21 @@ function setupUI() {
         outsideOpt.disabled = false;
       }
     }
+    if (engravingOpt) {
+      if (showContour && isDxf) {
+        engravingOpt.removeAttribute("hidden");
+        engravingOpt.disabled = false;
+      } else {
+        engravingOpt.setAttribute("hidden", "");
+        engravingOpt.disabled = true;
+        if (contourTypeSelect && contourTypeSelect.value === "engraving") {
+          contourTypeSelect.value = "outside";
+        }
+      }
+    }
 
     const contourOnlyElems = document.querySelectorAll(".contour-only");
-    const isDxf = shape === ShapeType.DXF;
+    const isDxfEngraving = isDxf && showContour && contourTypeSelect?.value === "engraving";
     const isCircularPatternHolesContour = showContour && shape === ShapeType.CIRCULAR_PATTERN_HOLES;
     if (isCircularPatternHolesContour && plungeOutsideInput) {
       plungeOutsideInput.value = "off";
@@ -7229,6 +8902,7 @@ function setupUI() {
         el.classList.remove("hidden");
         if (el.classList.contains("plunge-outside-no-dxf") && isDxf) el.classList.add("hidden");
         if (el.classList.contains("plunge-outside-no-circular-pattern-holes") && isCircularPatternHolesContour) el.classList.add("hidden");
+        if (el.id === "tab-settings" && isDxfEngraving) el.classList.add("hidden");
       } else {
         el.classList.add("hidden");
       }
@@ -7243,9 +8917,10 @@ function setupUI() {
       }
     });
 
-    // Stepover is alleen relevant voor pocket/facing, niet voor contour (enkele lijn)
+    // Stepover: pocket/facing; draadfrezen later via THREAD_MILLING_SPRING_PASSES_ENABLED
     if (stepoverRow) {
-      const showStepover = op === OperationType.POCKET || op === OperationType.FACING;
+      const showStepover = (op === OperationType.POCKET || op === OperationType.FACING)
+        && shape !== ShapeType.THREAD_MILLING;
       if (showStepover) {
         stepoverRow.classList.remove("hidden");
       } else {
@@ -7259,7 +8934,9 @@ function setupUI() {
       ? OperationType.FACING
       : (shape === ShapeType.PATTERNED_HOLES ? OperationType.POCKET : op);
     const showPocket = effectiveOpForPocket === OperationType.POCKET;
-    const showFinishingPass = effectiveOpForPocket === OperationType.POCKET || effectiveOpForPocket === OperationType.CONTOUR;
+    const showFinishingPass = (effectiveOpForPocket === OperationType.POCKET || effectiveOpForPocket === OperationType.CONTOUR)
+      && shape !== ShapeType.THREAD_MILLING
+      && !isDxfEngraving;
     document.querySelectorAll(".pocket-only").forEach((el) => {
       el.classList.toggle("hidden", !showPocket);
     });
@@ -7278,14 +8955,16 @@ function setupUI() {
       const fpDRow = document.getElementById("finishing-pass-distance-row");
       const fpSpeedRow = document.getElementById("finishing-pass-speed-override-row");
       const fpOverlapRow = document.getElementById("finishing-pass-overlap-row");
-      const showFinDistance = fpCb && fpCb.checked && (effectiveOpForPocket === OperationType.POCKET || effectiveOpForPocket === OperationType.CONTOUR);
+      const showFinDistance = fpCb && fpCb.checked
+        && (effectiveOpForPocket === OperationType.POCKET || effectiveOpForPocket === OperationType.CONTOUR)
+        && shape !== ShapeType.THREAD_MILLING;
       if (fpCb && fpDRow) fpDRow.classList.toggle("hidden", !showFinDistance);
       if (fpCb && fpSpeedRow) fpSpeedRow.classList.toggle("hidden", !fpCb.checked);
       if (fpCb && fpOverlapRow) fpOverlapRow.classList.toggle("hidden", !fpCb.checked);
     }
 
-    // Bij wisselen naar niet-contour: tabs uitzetten en parameters verbergen; insteken naast part uit
-    if (!showContour) {
+    // Bij wisselen naar niet-contour of DXF-gravering: tabs uitzetten en parameters verbergen; insteken naast part uit
+    if (!showContour || isDxfEngraving) {
       if (tabsEnabledCheckbox) {
         tabsEnabledCheckbox.checked = false;
         updateTabParamsVisibility();
@@ -7298,8 +8977,12 @@ function setupUI() {
       }
     }
     updateContourTabsRampHintVisibility();
+    updateFacingEvenSpacingHint();
+    updateToolDiameterVisibility();
+    updateEntryMethodForEngraving();
   }
   operationSelect.addEventListener("change", updateContourTypeVisibility);
+  if (contourTypeSelectForToolD) contourTypeSelectForToolD.addEventListener("change", updateContourTypeVisibility);
   updateContourTypeVisibility();
 
   const rampAngleInput = /** @type {HTMLInputElement} */ (document.getElementById("ramp-angle"));
@@ -7311,6 +8994,13 @@ function setupUI() {
     btn.addEventListener("click", () => {
       const value = btn.dataset.entry;
       if (!value || !entryMethodInput) return;
+      const shape = getEffectiveShape();
+      const contourType = normalizeContourType(
+        /** @type {HTMLSelectElement | null} */ (document.getElementById("contour-type"))?.value
+      );
+      if (value === EntryMethod.RAMP && isEngravingContourMode(shape, contourType, letterModeSelect?.value || "outline")) {
+        return;
+      }
 
       entryMethodInput.value = value;
 
@@ -7334,6 +9024,7 @@ function setupUI() {
   } else {
     rampSettings.classList.add("hidden");
   }
+  updateEntryMethodForEngraving();
   updateRampInputsDisabled();
   updateContourTabsRampHintVisibility();
 
@@ -7435,6 +9126,7 @@ function setupUI() {
 
   // Stepover-hint: in %-modus tonen we mm of in (d en val zijn altijd in display-eenheid), in mm/in-modus tonen we %
   const stepoverMmHint = document.getElementById("stepover-mm-hint");
+  const facingEvenSpacingInput = /** @type {HTMLInputElement | null} */ (document.getElementById("facing-even-spacing"));
   function updateStepoverHint() {
     if (!stepoverMmHint || !stepoverInput || !toolDiameterInput) return;
     const d = toNumber(toolDiameterInput.value);
@@ -7443,8 +9135,29 @@ function setupUI() {
     const displayUnit = getDisplayUnit();
     if (!Number.isFinite(d) || !Number.isFinite(val)) {
       stepoverMmHint.textContent = "";
+      updateFacingEvenSpacingHint();
       return;
     }
+
+    if (getEffectiveShape() === ShapeType.THREAD_MILLING && THREAD_MILLING_SPRING_PASSES_ENABLED) {
+      const holeEl = /** @type {HTMLInputElement | null} */ (document.getElementById("thread-hole-diameter"));
+      const majorEl = /** @type {HTMLInputElement | null} */ (document.getElementById("thread-major-diameter"));
+      const holeD = holeEl ? toMm(toNumber(holeEl.value), displayUnit) : NaN;
+      const majorD = majorEl ? toMm(toNumber(majorEl.value), displayUnit) : NaN;
+      const toolD = toMm(d, displayUnit);
+      let stepoverMm = stepoverUnit === "percent" ? (val / 100) * toolD : stepoverUnit === "mm" ? toMm(val, displayUnit) : NaN;
+      if (!Number.isFinite(stepoverMm) || stepoverMm <= 0) stepoverMm = 0.5 * toolD;
+      stepoverMm = Math.min(stepoverMm, toolD);
+      const passCount = Number.isFinite(holeD) && Number.isFinite(majorD)
+        ? computeThreadMillingPassRadii(holeD, majorD, toolD, stepoverMm).length
+        : 0;
+      const showVal = displayUnit === "inch" ? fromMm(stepoverMm, displayUnit).toFixed(3) : fromMm(stepoverMm, displayUnit).toFixed(2);
+      const key = displayUnit === "inch" ? "form.threadStepoverHintIn" : "form.threadStepoverHintMm";
+      stepoverMmHint.textContent = passCount > 0 ? t(key, { passes: passCount, val: showVal }) : "";
+      updateFacingEvenSpacingHint();
+      return;
+    }
+
     if (stepoverUnit === "percent" && d > 0) {
       const stepoverInDisplayUnit = (val / 100) * d;
       const showVal = displayUnit === "inch" ? stepoverInDisplayUnit.toFixed(3) : stepoverInDisplayUnit.toFixed(2);
@@ -7457,11 +9170,24 @@ function setupUI() {
     } else {
       stepoverMmHint.textContent = "";
     }
+    updateFacingEvenSpacingHint();
   }
   if (toolDiameterInput) toolDiameterInput.addEventListener("input", () => { updateStepoverHint(); if (stepoverWrapper && stepoverInput) updateStepoverMaxWhenMm(); });
   if (stepoverInput) stepoverInput.addEventListener("input", updateStepoverHint);
   document.addEventListener("languagechange", updateStepoverHint);
   document.addEventListener("unitchange", updateStepoverHint);
+  document.addEventListener("languagechange", updateFacingEvenSpacingHint);
+  document.addEventListener("unitchange", updateFacingEvenSpacingHint);
+  document.addEventListener("modechange", updateFacingEvenSpacingHint);
+  if (facingEvenSpacingInput) {
+    facingEvenSpacingInput.addEventListener("change", updateFacingEvenSpacingHint);
+  }
+  ["facing-mode", "facing-direction"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("change", updateFacingEvenSpacingHint);
+  });
+  if (rectWidthInput) rectWidthInput.addEventListener("input", updateFacingEvenSpacingHint);
+  if (rectHeightInput) rectHeightInput.addEventListener("input", updateFacingEvenSpacingHint);
   document.addEventListener("unitchange", updateRegenerateIndicator);
   document.addEventListener("modechange", updateRegenerateIndicator);
   function updateStepoverMaxWhenMm() {
@@ -7479,6 +9205,7 @@ function setupUI() {
     }
   }
   updateStepoverHint();
+  updateFacingEvenSpacingHint();
 
   // Meerdere dieptes: stepdown-row tonen/verbergen; default stepdown = totale diepte / 2 (max laaghoogte)
   const multipleDepthsCheckbox = /** @type {HTMLInputElement} */ (document.getElementById("multiple-depths"));
@@ -7548,14 +9275,16 @@ function setupUI() {
   function updateFinishingPassDistVisibility() {
     if (!finishingPassDistRow || !finishingPassCheckbox) return;
     const opType = (/** @type {HTMLSelectElement} */ (document.getElementById("operation-type")))?.value ?? OperationTypeCategory.SHAPES;
-    const shape = opType === OperationTypeCategory.SHAPES
-      ? (/** @type {HTMLSelectElement} */ (document.getElementById("shape")))?.value
-      : opType;
+    const shape = resolveEffectiveShape(
+      opType,
+      (/** @type {HTMLSelectElement} */ (document.getElementById("shape")))?.value
+    );
     const opRaw = (/** @type {HTMLSelectElement} */ (document.getElementById("operation")))?.value;
     const effectiveOp = shape === ShapeType.FACING
       ? OperationType.FACING
       : (shape === ShapeType.PATTERNED_HOLES ? OperationType.POCKET : opRaw);
-    const showDistanceForOp = effectiveOp === OperationType.POCKET || effectiveOp === OperationType.CONTOUR;
+    const showDistanceForOp = (effectiveOp === OperationType.POCKET || effectiveOp === OperationType.CONTOUR)
+      && shape !== ShapeType.THREAD_MILLING;
     finishingPassCheckbox.disabled = !showDistanceForOp;
     if (!showDistanceForOp) {
       finishingPassCheckbox.checked = false;
@@ -7623,7 +9352,7 @@ function setupUI() {
   let cursorColumnForPreview = null;
 
   // Playback: time-based animatie op vaste 10fps, positie geïnterpoleerd langs het pad
-  const GCODE_HEADER_LINES = 5; // aantal regels vóór de eerste beweging in gegenereerde gcode
+  const GCODE_HEADER_LINES = 7; // aantal regels vóór de eerste beweging in gegenereerde gcode
   const PREVIEW_TICK_MS = 67; // 15fps
   let playbackElapsedMs = 0;
   let playbackStartTime = 0;
@@ -7707,8 +9436,12 @@ function setupUI() {
       const elapsedMs = (Date.now() - playbackStartTime) * playbackSpeedMultiplier;
       const pos = getPositionAtTimeMs(playbackCumulativeTimesMs, lastToolpath.moves, elapsedMs);
       if (pos) {
-        const isLettersOutline = shapeSelect.value === ShapeType.LETTERS && (letterModeSelect?.value || "outline") === "outline";
-        const diameter = isLettersOutline ? 0.5 : (toolDiameterInput ? toNumber(toolDiameterInput.value) || 6 : 6);
+        const engravingToolD = getEngravingToolDiameterMm(
+          shapeSelect.value,
+          /** @type {HTMLSelectElement | null} */ (document.getElementById("contour-type"))?.value,
+          letterModeSelect?.value || "outline"
+        );
+        const diameter = engravingToolD != null ? engravingToolD : (toolDiameterInput ? toNumber(toolDiameterInput.value) || 6 : 6);
         return { x: pos.x, y: pos.y, z: pos.z, diameter };
       }
     }
@@ -7920,14 +9653,18 @@ function setupUI() {
   }
   if (speedSlider) {
     speedSlider.addEventListener("input", () => {
+      const previousSpeedMultiplier = playbackSpeedMultiplier;
       const norm = Number(speedSlider.value);
-      playbackSpeedMultiplier = speedSliderToMultiplier(norm);
+      const nextSpeedMultiplier = speedSliderToMultiplier(norm);
+      playbackSpeedMultiplier = nextSpeedMultiplier;
       speedSlider.value = String(speedMultiplierToSlider(playbackSpeedMultiplier));
       if (speedValueEl) speedValueEl.textContent = formatMultiplierForDisplay(playbackSpeedMultiplier);
       if (isPlaying && playbackIntervalId !== null) {
-        playbackElapsedMs = (Date.now() - playbackStartTime) * playbackSpeedMultiplier;
+        // Keep current playback position stable and only change speed from "now" onward.
+        playbackElapsedMs = (Date.now() - playbackStartTime) * previousSpeedMultiplier;
         playbackStartTime = Date.now() - playbackElapsedMs / playbackSpeedMultiplier;
       }
+      saveLastSettings();
     });
   }
 
@@ -7948,8 +9685,12 @@ function setupUI() {
           z: toMm(point.z, "inch"),
         };
       }
-      const isLettersOutline = shapeSelect.value === ShapeType.LETTERS && (letterModeSelect?.value || "outline") === "outline";
-      const diameter = isLettersOutline ? 0.5 : (toolDiameterInput ? toNumber(toolDiameterInput.value) || 6 : 6);
+      const engravingToolD = getEngravingToolDiameterMm(
+        shapeSelect.value,
+        /** @type {HTMLSelectElement | null} */ (document.getElementById("contour-type"))?.value,
+        letterModeSelect?.value || "outline"
+      );
+      const diameter = engravingToolD != null ? engravingToolD : (toolDiameterInput ? toNumber(toolDiameterInput.value) || 6 : 6);
       cursorColumnForPreview = {
         ...point,
         diameter,
@@ -7975,6 +9716,7 @@ function setupUI() {
     if (resetBtn) resetBtn.disabled = !hasMoves;
   }
   document.addEventListener("languagechange", updatePlaybackButtonsState);
+  document.addEventListener("languagechange", renderChainStepsBar);
 
   if (gcodeOutput) {
     gcodeOutput.addEventListener("focus", updatePreviewWithCursorPoint);
@@ -7984,6 +9726,13 @@ function setupUI() {
     gcodeOutput.addEventListener("input", updatePreviewWithCursorPoint);
     gcodeOutput.addEventListener("scroll", syncGcodeOverlayScroll);
   }
+
+  CHAIN_BASELINE_FIELD_IDS.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("input", onChainBaselineFieldsChanged);
+    el.addEventListener("change", onChainBaselineFieldsChanged);
+  });
 
   form.addEventListener("input", updateRegenerateIndicator);
   form.addEventListener("change", updateRegenerateIndicator);
@@ -8006,6 +9755,84 @@ function setupUI() {
     if (errorMessage) errorMessage.textContent = "";
 
     try {
+      if (isChainModeEnabled()) {
+        await saveActiveChainStepFromForm();
+        if (chainJobSteps.length === 0) {
+          if (errorMessage) errorMessage.textContent = t("chain.needSteps");
+          return;
+        }
+        const baseline = extractBaselineFieldsFromFormState(chainJobSteps[0].formState);
+        /** @type {{ toolpath: Toolpath, params: * }[]} */
+        const stepResults = [];
+        for (let i = 0; i < chainJobSteps.length; i++) {
+          const raw = await prepareRawFromChainStep(chainJobSteps[i], i === 0 ? null : baseline);
+          const validation = validateInputs(raw);
+          if (!validation.ok) {
+            if (errorMessage) errorMessage.textContent = t("chain.stepError", { n: i + 1 }) + validation.errors.join(" ");
+            if (chainActiveStepId) loadChainStepToForm(chainActiveStepId);
+            return;
+          }
+          if (validation.params.shape === ShapeType.LETTERS) {
+            try {
+              validation.params.letterFont = await loadLetterFont();
+            } catch (fontErr) {
+              const msg = fontErr instanceof Error ? fontErr.message : String(fontErr);
+              if (errorMessage) errorMessage.textContent = t("chain.stepError", { n: i + 1 }) + msg;
+              if (chainActiveStepId) loadChainStepToForm(chainActiveStepId);
+              return;
+            }
+          }
+          const toolpath = generateToolpath(validation.params);
+          stepResults.push({ toolpath, params: validation.params });
+        }
+        if (chainActiveStepId) loadChainStepToForm(chainActiveStepId);
+        const mergedToolpath = mergeChainToolpaths(stepResults);
+        const gcode = jobToolpathsToGcode(stepResults);
+        lastToolpath = mergedToolpath;
+
+        stopPlayback();
+        playbackElapsedMs = 0;
+        updatePlaybackButtonsState();
+
+        if (gcodeOutput) {
+          gcodeOutput.value = gcode;
+          gcodeOutput.selectionStart = 0;
+          gcodeOutput.selectionEnd = 0;
+          gcodeOutput.scrollTop = 0;
+          gcodeOutput.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          updateGcodeLineHighlight();
+        }
+        const gcodeEstimateEl = document.getElementById("gcode-estimate");
+        if (gcodeEstimateEl) {
+          let totalMinutes = 0;
+          stepResults.forEach((sr) => {
+            totalMinutes += estimateMillingTime(sr.toolpath, sr.params.cutParams).totalMinutes;
+          });
+          gcodeEstimateEl.textContent = t("preview.estimatedTime", {
+            time: formatEstimatedTime(totalMinutes),
+          });
+        }
+        if (previewCanvas) renderPreview(mergedToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
+
+        saveLastSettings();
+        lastGenerationSnapshot = getParamsSnapshotReadOnly();
+        updateRegenerateIndicator();
+
+        if (downloadBtn) {
+          downloadBtn.disabled = false;
+          downloadBtn.onclick = () => {
+            const now = new Date();
+            const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
+            downloadGcode(`gcode_job_${chainJobSteps.length}steps_${ts}.nc`, gcode);
+          };
+        }
+        if (copyBtn) {
+          copyBtn.disabled = false;
+          copyBtn.onclick = () => copyGcodeToClipboard(gcode);
+        }
+        return;
+      }
+
       const raw = readInputsFromForm();
       if (raw.shape === ShapeType.DXF) {
         const dxfFileInput = document.getElementById("dxf-file");
@@ -8103,7 +9930,9 @@ function setupUI() {
             ? `gcode_letters_${ts}.nc`
             : raw.shape === ShapeType.DXF
               ? `gcode_dxf_${raw.operation}_${ts}.nc`
-              : `gcode_${raw.shape}_${raw.operation}_${ts}.nc`;
+              : raw.shape === ShapeType.THREAD_MILLING
+                ? `gcode_thread_milling_${raw.shapeParams?.threadMillType || ThreadMillType.INTERNAL}_${ts}.nc`
+                : `gcode_${raw.shape}_${raw.operation}_${ts}.nc`;
           downloadGcode(filename, gcode);
         };
       }
@@ -8123,6 +9952,7 @@ function setupUI() {
   // init defaults
   updateUIForOperationTypeAndShape();
   restoreLastSettings();
+  applyChainModeUI(isChainModeEnabled());
   updateRegenerateIndicator();
 
   // lege preview

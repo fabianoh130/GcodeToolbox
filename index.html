@@ -12,7 +12,7 @@
     <header class="app-header">
       <div class="app-header-inner">
         <div>
-          <h1><span data-i18n="header.title">Gcode toolbox</span> <a href="https://github.com/fabianoh130/GcodeToolbox" target="_blank" rel="noopener noreferrer" class="app-version" data-i18n-title="header.checkForUpdates" title="Check for updates">v3.8</a></h1>
+          <h1><span data-i18n="header.title">Gcode toolbox</span> <a href="https://github.com/fabianoh130/GcodeToolbox" target="_blank" rel="noopener noreferrer" class="app-version" data-i18n-title="header.checkForUpdates" title="Check for updates">v4.0</a></h1>
         </div>
         <div class="settings-menu-wrapper">
           <button
@@ -82,6 +82,16 @@
               </div>
               <input type="file" id="settings-import-file" accept=".json" class="hidden" />
             </div>
+            <div class="settings-section settings-section--chain">
+              <button type="button" class="settings-submenu-trigger" id="chain-submenu-trigger" aria-expanded="false" aria-controls="chain-submenu">
+                <span class="settings-section-label" data-i18n="settings.chainOperations">Chain operations</span>
+                <span class="settings-submenu-chevron" aria-hidden="true">▸</span>
+              </button>
+              <div id="chain-submenu" class="settings-submenu settings-submenu--side hidden" role="menu">
+                <button type="button" class="settings-chain-item" data-chain="off" data-i18n="settings.chainOff">Off</button>
+                <button type="button" class="settings-chain-item" data-chain="on" data-i18n="settings.chainOn">On</button>
+              </div>
+            </div>
             <div class="settings-section settings-section--machine">
               <button type="button" class="settings-submenu-trigger" id="settings-machine-btn">
                 <span class="settings-section-label" data-i18n="settings.machineSettings">Machine settings</span>
@@ -91,6 +101,15 @@
         </div>
       </div>
     </header>
+
+    <div id="chain-steps-bar" class="chain-steps-bar hidden" role="region" aria-label="Operation steps">
+      <div class="chain-steps-bar-inner">
+        <span class="chain-steps-label" data-i18n="chain.stepsLabel">Steps</span>
+        <div id="chain-steps-list" class="chain-steps-list"></div>
+        <button type="button" id="chain-add-step-btn" class="chain-add-step-btn" data-i18n-title="chain.addStepTitle" title="Add step">+</button>
+      </div>
+      <p id="chain-baseline-hint" class="chain-baseline-hint hidden" data-i18n="chain.baselineHint">Origin and machine settings are set by step 1 and locked for the other steps.</p>
+    </div>
 
     <main class="app-main">
       <section class="panel panel-form">
@@ -104,9 +123,16 @@
                 <option value="facing" data-i18n="form.shapeFacing">Vlakken (facing)</option>
                 <option value="letters" data-i18n="form.shapeLetters">Letters (gravering)</option>
                 <option value="counterbore_bolt" data-i18n="form.shapeCounterboreBolt">Verzinkboring</option>
-                <option value="patterned_holes" data-i18n="form.shapePatternedHoles">Patterned holes</option>
-                <option value="circular_pattern_holes" data-i18n="form.shapeCircularPatternHoles">Circulaire gaten</option>
+                <option value="thread_milling" data-i18n="form.shapeThreadMilling">Draadfrezen</option>
+                <option value="hole_pattern" data-i18n="form.shapePatternedHoles">Patroongaten</option>
                 <option value="dxf" data-i18n="form.shapeDxf">DXF (contouren)</option>
+              </select>
+            </div>
+            <div id="hole-pattern-layout-row" class="field-row hole-pattern-only hidden">
+              <label for="hole-pattern-layout" data-i18n="form.holePatternLayout">Patroontype</label>
+              <select id="hole-pattern-layout" name="hole-pattern-layout">
+                <option value="grid" data-i18n="form.holePatternLayoutGrid">Rooster (X × Y)</option>
+                <option value="circular" data-i18n="form.holePatternLayoutCircular">Cirkel</option>
               </select>
             </div>
             <div id="shape-row" class="field-row vormen-only hidden">
@@ -184,7 +210,7 @@
                 </select>
               </div>
 
-              <div class="field-row shape-field shape-square shape-rectangle hidden">
+              <div class="field-row shape-field shape-rounded-corners hidden">
                 <label for="rounded-corner-radius" data-i18n="form.roundedCornerRadius">Afgeronde hoeken (radius)</label>
                 <div class="input-with-stepper" data-step="0.5" data-min="0">
                   <input type="number" id="rounded-corner-radius" min="0" step="0.5" value="0" />
@@ -413,6 +439,64 @@
                 </div>
               </div>
 
+              <div class="field-row shape-field shape-thread-milling hidden">
+                <label for="thread-mill-type" data-i18n="form.threadMillType">Draadrichting</label>
+                <select id="thread-mill-type" name="thread-mill-type">
+                  <option value="internal" data-i18n="form.threadMillTypeInternal">Binnendraad</option>
+                  <option value="external" data-i18n="form.threadMillTypeExternal">Buitendraad</option>
+                </select>
+              </div>
+              <div class="field-row shape-field shape-thread-milling hidden">
+                <label for="thread-system" data-i18n="form.threadSystem">Draad systeem</label>
+                <select id="thread-system" name="thread-system">
+                  <option value="metric" data-i18n="form.threadSystemMetric">Metrisch</option>
+                  <option value="inch" data-i18n="form.threadSystemInch">Inch (UNC)</option>
+                </select>
+              </div>
+              <div class="field-row shape-field shape-thread-milling hidden dimension-presets-row">
+                <label for="thread-preset" class="field-label" data-i18n="form.threadPreset">Draadmaat</label>
+                <select id="thread-preset" class="preset-select" aria-label="Draadmaat preset">
+                  <option value="" data-i18n="form.presetsNone">—</option>
+                </select>
+              </div>
+              <div class="field-row shape-field shape-thread-milling hidden">
+                <label for="thread-major-diameter" data-i18n="form.threadMajorDiameter">Buitendiameter draad (mm)</label>
+                <div class="input-with-stepper" data-step="0.5" data-min="0">
+                  <input type="number" id="thread-major-diameter" min="0" step="any" value="6" />
+                  <div class="stepper-buttons">
+                    <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
+                    <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
+                  </div>
+                </div>
+              </div>
+              <div class="field-row shape-field shape-thread-milling hidden">
+                <label for="thread-pitch" data-i18n="form.threadPitch">Steek (mm)</label>
+                <div class="input-with-stepper" data-step="0.1" data-min="0">
+                  <input type="number" id="thread-pitch" min="0" step="any" value="1" />
+                  <div class="stepper-buttons">
+                    <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
+                    <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
+                  </div>
+                </div>
+              </div>
+              <div class="field-row shape-field shape-thread-milling thread-internal-only hidden">
+                <label for="thread-hole-diameter" data-i18n="form.threadHoleDiameter">Boordiameter (mm)</label>
+                <div class="input-with-stepper input-with-stepper--readonly">
+                  <input type="number" id="thread-hole-diameter" readonly tabindex="-1" value="5" aria-readonly="true" />
+                  <div class="stepper-buttons stepper-buttons--spacer" aria-hidden="true"></div>
+                </div>
+              </div>
+              <div class="field-row shape-field shape-thread-milling hidden">
+                <label for="thread-milling-depth" data-i18n="form.threadMillingDepth">Draaddiepte (mm)</label>
+                <div class="input-with-stepper" data-step="0.5" data-min="0">
+                  <input type="number" id="thread-milling-depth" min="0" step="any" value="9" />
+                  <div class="stepper-buttons">
+                    <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
+                    <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
+                  </div>
+                </div>
+              </div>
+
               <div class="field-row shape-field shape-dxf hidden">
                 <label for="dxf-file" data-i18n="form.dxfFile">DXF-bestand</label>
                 <div class="dxf-file-wrapper">
@@ -454,6 +538,14 @@
                 <option value="y" data-i18n="form.facingDirectionY">Y (strips langs Y, stepover in X)</option>
               </select>
             </div>
+            <div id="facing-finish-mode-row" class="field-row facing-only hidden" data-mode="advanced">
+              <label for="facing-finish-mode" data-i18n="form.facingFinishMode">Facing afwerking</label>
+              <select id="facing-finish-mode" name="facing-finish-mode">
+                <option value="off" selected data-i18n="form.facingFinishOff">Uit</option>
+                <option value="cross" data-i18n="form.facingFinishCross">Cross (extra sweep in andere richting)</option>
+                <option value="perimeter" data-i18n="form.facingFinishPerimeter">Perimeter (extra rand-finish)</option>
+              </select>
+            </div>
             <div id="facing-even-spacing-row" class="field-row field-row--inline facing-only hidden" data-mode="advanced">
               <span class="field-label" data-i18n="form.facingEvenSpacing">Restafstand gelijkmatig verdelen</span>
               <label class="toggle-btn-label">
@@ -463,12 +555,14 @@
                   <span class="toggle-btn-yes" data-i18n="form.yes">Ja</span>
                 </span>
               </label>
+              <span id="facing-even-spacing-hint" class="field-hint" aria-live="polite"></span>
             </div>
             <div id="contour-type-row" class="field-row contour-only hidden">
               <label for="contour-type" data-i18n="form.contourType">Contour type</label>
               <select id="contour-type" name="contour-type">
                 <option value="outside" id="contour-type-outside" data-i18n="form.contourOutside">Buitencontour (vorm uitsnijden)</option>
                 <option value="inside" data-i18n="form.contourInside">Binnencontour (binnenkant van de vorm)</option>
+                <option value="engraving" id="contour-type-engraving" hidden data-i18n="form.contourEngraving">Graveren (exact over de lijn)</option>
               </select>
             </div>
             <fieldset id="tab-settings" class="contour-only hidden">
@@ -532,7 +626,10 @@
             <div id="tool-diameter-outline-hint" class="field-row hidden" aria-live="polite">
               <p class="outline-hint" data-i18n="form.outlineHint">Gebruik een V-vormig freesje voor de beste resultaten bij outline-gravering.</p>
             </div>
-            <div class="field-row">
+            <div id="tool-diameter-thread-hint" class="field-row hidden" aria-live="polite">
+              <p class="outline-hint outline-hint--warning" data-i18n="form.threadToolDiameterHint">Deze berekening gaat ervan uit dat de tand van je frees de juiste vorm en diepte heeft. Controle van gereedschap en instellingen is je eigen verantwoordelijkheid.</p>
+            </div>
+            <div id="total-depth-row" class="field-row">
               <label for="total-depth" data-i18n="form.totalDepth">Totale diepte (mm)</label>
               <div class="input-with-stepper" data-step="0.5" data-min="0">
                 <!-- step="any" zodat alle dieptes zijn toegestaan; data-step alleen voor de +/- knoppen -->
@@ -543,7 +640,7 @@
                 </div>
               </div>
             </div>
-            <div class="field-row field-row--inline">
+            <div id="multiple-depths-row" class="field-row field-row--inline">
               <span class="field-label" data-i18n="form.multipleDepths">Meerdere dieptes</span>
               <label class="toggle-btn-label">
                 <input type="checkbox" id="multiple-depths" class="toggle-btn-input" />
@@ -625,7 +722,7 @@
                 </div>
               </div>
             </div>
-            <div class="field-row">
+            <div class="field-row" id="feedrate-row">
               <label for="feedrate" data-i18n="form.feedrate">Voedingssnelheid F (mm/min)</label>
               <div class="input-with-stepper" data-step="1" data-min="0">
                 <input type="number" id="feedrate" min="0" step="any" required value="800" />
@@ -667,7 +764,7 @@
             </div>
           </fieldset>
 
-          <fieldset>
+          <fieldset id="origin-fieldset">
             <legend data-i18n="form.originLegend">Origin (nulpunten)</legend>
             <div class="field-row">
               <label for="xy-origin" data-i18n="form.xyOrigin">XY-origin</label>
@@ -697,7 +794,7 @@
               </div>
             </div>
             <div class="field-row" data-mode="advanced">
-              <label for="origin-offset-x" data-i18n="form.originOffsetX">Origin offset X (mm)</label>
+              <label for="origin-offset-x" data-i18n="form.originOffsetX">Offset from origin X (mm)</label>
               <div class="input-with-stepper" data-step="0.5" data-min="">
                 <input type="number" id="origin-offset-x" step="0.5" value="0" />
                 <div class="stepper-buttons">
@@ -707,7 +804,7 @@
               </div>
             </div>
             <div class="field-row" data-mode="advanced">
-              <label for="origin-offset-y" data-i18n="form.originOffsetY">Origin offset Y (mm)</label>
+              <label for="origin-offset-y" data-i18n="form.originOffsetY">Offset from origin Y (mm)</label>
               <div class="input-with-stepper" data-step="0.5" data-min="">
                 <input type="number" id="origin-offset-y" step="0.5" value="0" />
                 <div class="stepper-buttons">
@@ -718,7 +815,7 @@
             </div>
           </fieldset>
 
-          <fieldset data-mode="advanced">
+          <fieldset id="entry-settings-fieldset" data-mode="advanced">
             <legend data-i18n="form.entryLegend">Insteek</legend>
             <div class="field-row">
               <span class="field-label" data-i18n="form.entryMethod">Insteekmethode</span>
