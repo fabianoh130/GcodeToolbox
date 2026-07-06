@@ -3,6 +3,8 @@ name: Deploy static site to Pages
 on:
   release:
     types: [published]
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       deploy_ref:
@@ -44,7 +46,7 @@ jobs:
             });
 
   deploy:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name != 'release'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
