@@ -84,6 +84,7 @@ body {
 .settings-menu-wrapper {
   position: relative;
   flex-shrink: 0;
+  z-index: 2;
 }
 
 .settings-menu-btn {
@@ -1191,6 +1192,8 @@ body[data-chain-mode="off"] #chain-steps-bar {
 }
 
 body[data-chain-mode="on"] .app-header {
+  position: relative;
+  z-index: 2;
   border-radius: 22px 22px 0 0;
   border-bottom: none;
   box-shadow: none;
@@ -1202,6 +1205,8 @@ body[data-chain-mode="on"] .app-header {
 }
 
 body[data-chain-mode="on"] .chain-steps-bar {
+  position: relative;
+  z-index: 1;
   margin-top: 0;
   border-radius: 0 0 22px 22px;
   border: 1px solid rgba(148, 163, 184, 0.25);
