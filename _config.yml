@@ -1,0 +1,9 @@
+# Keep GitHub Pages from re-processing the site after the Actions artifact is published.
+include:
+  - .nojekyll
+
+# The app is a static site; only render wiki docs with Jekyll.
+exclude:
+  - README.md
+  - LICENSE
+  - scripts
