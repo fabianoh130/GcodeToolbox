@@ -3882,16 +3882,23 @@ function generateToolpath(params) {
         if (Math.hypot(lx - retractX, ly - retractY) > 1e-6) {
           moves.push({ x: retractX, y: retractY, z: bottomZ, type: "rapid" });
         }
-        const retractZ = isLastPass ? safeZ : leadInAbove;
-        moves.push({ x: retractX, y: retractY, z: retractZ, type: "rapid" });
-      } else {
-        if (Math.abs(last.x - cx) > 1e-6 || Math.abs(last.y - cy) > 1e-6) {
-          moves.push({ x: cx, y: cy, z: bottomZ, type: "rapid" });
+        if (Math.abs(bottomZ - leadInAbove) > 1e-6) {
+          moves.push({ x: retractX, y: retractY, z: leadInAbove, type: "cut" });
         }
-        if (isLastPass) {
+        if (isLastPass && safeZ > leadInAbove + 1e-6) {
+          moves.push({ x: retractX, y: retractY, z: safeZ, type: "rapid" });
+        }
+      } else {
+        // Helix eindigt op de baanradius; eerst radiaal naar draadcentrum op snijdiepte (feed).
+        if (Math.abs(last.x - cx) > 1e-6 || Math.abs(last.y - cy) > 1e-6) {
+          moves.push({ x: cx, y: cy, z: bottomZ, type: "cut" });
+        }
+        // Uit op feed rate tot lead-in hoogte (geen rapid uit het gat).
+        if (Math.abs(bottomZ - leadInAbove) > 1e-6) {
+          moves.push({ x: cx, y: cy, z: leadInAbove, type: "cut" });
+        }
+        if (isLastPass && safeZ > leadInAbove + 1e-6) {
           moves.push({ x: cx, y: cy, z: safeZ, type: "rapid" });
-        } else {
-          moves.push({ x: cx, y: cy, z: leadInAbove, type: "rapid" });
         }
       }
     });
