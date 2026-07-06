@@ -4,6 +4,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      deploy_ref:
+        description: 'Git ref to deploy (branch or tag)'
+        required: false
+        default: 'main'
 
 permissions:
   contents: read
@@ -15,7 +20,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Release runs use the tag ref, which is blocked by the github-pages environment
+  # (only `main` is allowed). Queue a workflow_dispatch on `main` instead.
+  release-trigger:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Queue deployment on main
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'deploy-pages.yml',
+              ref: 'main',
+              inputs: {
+                deploy_ref: context.payload.release.tag_name
+              }
+            });
+
   deploy:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -23,6 +52,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.deploy_ref || 'main' }}
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
