@@ -214,6 +214,14 @@ const EntryMethod = {
   RAMP: "ramp",
 };
 
+/** @param {string} raw */
+function normalizeFacingMode(raw) {
+  const v = String(raw ?? "").toLowerCase().trim();
+  if (v === "within") return "within";
+  if (v === "spiral") return "spiral";
+  return "full";
+}
+
 /**
  * @typedef {{ x: number, y: number, z: number, type: 'rapid'|'cut', feedOverridePct?: number }} ToolpathMove
  * @typedef {{ moves: ToolpathMove[], resultPaths?: {x:number,y:number,z:number}[][], resultTotalDepth?: number, resultBottomZ?: number, resultContourInside?: boolean, resultPathsWithDepth?: {path:{x:number,y:number,z:number}[], topZ:number, bottomZ:number}[], resultBounds?: {minX:number,maxX:number,minY:number,maxY:number}, toolDiameter?: number }} Toolpath
@@ -1253,10 +1261,10 @@ function readInputsFromForm() {
   const rampAngle = toNumber(g("ramp-angle").value);
 
   const plungeOutsideRaw = /** @type {HTMLInputElement} */ (g("plunge-outside"))?.value ?? "off";
-  const plungeOutside = isSimpleMode ? false : ((operation === OperationType.POCKET || operation === OperationType.FACING || shape === ShapeType.DXF) ? false : plungeOutsideRaw === "on");
+  const plungeOutside = isSimpleMode ? false : ((operation === OperationType.POCKET || shape === ShapeType.DXF) ? false : plungeOutsideRaw === "on");
 
   const facingModeRaw = (/** @type {HTMLSelectElement} */ (g("facing-mode")))?.value?.trim?.() ?? "";
-  const facingMode = facingModeRaw === "within" ? "within" : "full";
+  const facingMode = normalizeFacingMode(facingModeRaw);
   const facingDirectionRaw = isSimpleMode ? "x" : ((/** @type {HTMLSelectElement} */ (g("facing-direction")))?.value?.trim?.() ?? "");
   const facingDirection = facingDirectionRaw === "y" ? "y" : "x";
   const facingFinishModeRaw = isSimpleMode ? "off" : ((/** @type {HTMLSelectElement} */ (g("facing-finish-mode")))?.value?.trim?.() ?? "");
@@ -1413,8 +1421,8 @@ function getParamsSnapshotReadOnly() {
     originOffsetY: isSimple ? 0 : (vm("origin-offset-y") || 0),
   };
   const plungeRaw = el("plunge-outside")?.value ?? "off";
-  const plunge = isSimple ? false : ((operation === OperationType.POCKET || operation === OperationType.FACING || shape === ShapeType.DXF) ? false : plungeRaw === "on");
-  const facing = (el("facing-mode")?.value?.trim?.() ?? "") === "within" ? "within" : "full";
+  const plunge = isSimple ? false : ((operation === OperationType.POCKET || shape === ShapeType.DXF) ? false : plungeRaw === "on");
+  const facing = normalizeFacingMode(el("facing-mode")?.value?.trim?.() ?? "");
   const facingDir = isSimple ? "x" : ((el("facing-direction")?.value?.trim?.() ?? "") === "y" ? "y" : "x");
   const facingFinishRaw = isSimple ? "off" : (el("facing-finish-mode")?.value?.trim?.() ?? "");
   const facingFinishMode = facingFinishRaw === "cross" || facingFinishRaw === "perimeter" ? facingFinishRaw : "off";
@@ -1700,10 +1708,10 @@ function computeDepthLevels(totalDepth, stepdown) {
   const numLayers = Math.max(1, Math.ceil(totalDepth / stepdown));
   const layerHeight = totalDepth / numLayers;
   const depths = [];
-  const round1 = (v) => Math.round(v * 10) / 10;
+  const roundDepth = (v) => Math.round(v * 1000) / 1000;
   for (let i = 1; i <= numLayers; i++) {
     const z = i === numLayers ? -totalDepth : -i * layerHeight;
-    depths.push(-round1(Math.abs(z)));
+    depths.push(-roundDepth(Math.abs(z)));
   }
   return depths;
 }
@@ -2781,6 +2789,113 @@ function generateFacingPaths(shape, shapeParams, stepover, toolRadius, facingMod
     }
   }
   return paths;
+}
+
+/**
+ * Voegt een lineair insteekpunt toe vóór het pad (plunge op afstand, feed het materijal in).
+ * @param {{x:number,y:number,z?:number}[]} path
+ * @param {number} toolDiameter
+ * @returns {{x:number,y:number,z:number}[]}
+ */
+function prependLinearPlungeLeadIn(path, toolDiameter) {
+  if (!path || path.length < 2 || !Number.isFinite(toolDiameter) || toolDiameter <= 0) {
+    return path;
+  }
+  const p0 = path[0];
+  const p1 = path[1];
+  const dx = p1.x - p0.x;
+  const dy = p1.y - p0.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= 1e-9) return path;
+  const leadInDist = toolDiameter * 1.5;
+  return [
+    { x: p0.x - (dx / dist) * leadInDist, y: p0.y - (dy / dist) * leadInDist, z: p0.z ?? 0 },
+    ...path,
+  ];
+}
+
+/**
+ * Facing-spiraal: rechtsom naar binnen, axis-parallelle overgangen tussen ringen.
+ * @param {string} shape
+ * @param {{ size?: number, width?: number, height?: number }} shapeParams
+ * @param {number} stepover
+ * @param {number} toolRadius
+ * @returns {{x:number,y:number,z:number}[]}
+ */
+function generateFacingSpiralPath(shape, shapeParams, stepover, toolRadius) {
+  const partW = shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.width;
+  const partH = shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.height;
+  if (!Number.isFinite(partW) || !Number.isFinite(partH) || partW <= 0 || partH <= 0) return [];
+  if (!Number.isFinite(stepover) || stepover <= 0) return [];
+  if (!Number.isFinite(toolRadius) || toolRadius < 0) toolRadius = 0;
+
+  const inset = Math.min(stepover, toolRadius > 0 ? toolRadius : stepover);
+  let xMin = -partW / 2 + inset;
+  let xMax = partW / 2 - inset;
+  let yMin = -partH / 2 + inset;
+  let yMax = partH / 2 - inset;
+
+  if (xMin > xMax || yMin > yMax) return [];
+
+  /** @type {{x:number,y:number,z:number}[]} */
+  const path = [];
+  const eps = 1e-9;
+
+  path.push({ x: xMin, y: yMin, z: 0 });
+
+  let safety = 0;
+  const maxRings = 10000;
+
+  while (safety++ < maxRings) {
+    path.push({ x: xMin, y: yMax, z: 0 });
+    path.push({ x: xMax, y: yMax, z: 0 });
+    path.push({ x: xMax, y: yMin, z: 0 });
+
+    const nextXMin = xMin + stepover;
+    const nextXMax = xMax - stepover;
+    const nextYMin = yMin + stepover;
+    const nextYMax = yMax - stepover;
+    const remainingW = nextXMax - nextXMin;
+    const remainingH = nextYMax - nextYMin;
+
+    if (remainingW < -eps || remainingH < -eps) {
+      path.push({ x: xMin, y: yMin, z: 0 });
+      break;
+    }
+
+    if (remainingW < stepover - eps || remainingH < stepover - eps) {
+      path.push({ x: nextXMin, y: yMin, z: 0 });
+      path.push({ x: nextXMin, y: nextYMin, z: 0 });
+
+      if (remainingW < eps && remainingH < eps) {
+        break;
+      } else if (remainingW < eps) {
+        const cy = (nextYMin + nextYMax) / 2;
+        path.push({ x: nextXMin, y: nextYMax, z: 0 });
+        break;
+      } else if (remainingH < eps) {
+        const cx = (nextXMin + nextXMax) / 2;
+        path.push({ x: nextXMax, y: nextYMin, z: 0 });
+        break;
+      } else {
+        path.push({ x: nextXMin, y: nextYMax, z: 0 });
+        path.push({ x: nextXMax, y: nextYMax, z: 0 });
+        path.push({ x: nextXMax, y: nextYMin, z: 0 });
+        path.push({ x: nextXMin, y: nextYMin, z: 0 });
+        break;
+      }
+    }
+
+    path.push({ x: nextXMin, y: yMin, z: 0 });
+    path.push({ x: nextXMin, y: yMin + stepover, z: 0 });
+
+    xMin = nextXMin;
+    xMax = nextXMax;
+    yMin = yMin + stepover;
+    yMax = nextYMax;
+  }
+
+  return path;
 }
 
 /**
@@ -4165,49 +4280,55 @@ function generateToolpath(params) {
   /** @type {{ hw:number, hh:number, within:boolean } | null} */
   let facingOpenBounds = null;
   if (shape === ShapeType.FACING || (operation === OperationType.FACING && (shape === ShapeType.SQUARE || shape === ShapeType.RECTANGLE))) {
-    const mode = (params.facingMode && String(params.facingMode).toLowerCase().trim() === "within") ? "within" : "full";
+    const mode = normalizeFacingMode(params.facingMode);
     const dir = (params.facingDirection && String(params.facingDirection).toLowerCase().trim() === "y") ? "y" : "x";
     const finishMode = normalizeFacingFinishMode(params.facingFinishMode);
     const even = !!params.facingEvenSpacing;
     const useShape = shape === ShapeType.FACING ? ShapeType.RECTANGLE : shape;
     const useParams = shapeParams;
-    const facingGeom = getFacingEffectiveGeometry(useShape, useParams, toolRadius, mode);
+    const geomMode = mode === "within" ? "within" : "full";
+    const facingGeom = getFacingEffectiveGeometry(useShape, useParams, toolRadius, geomMode);
     if (facingGeom) {
-      facingOpenBounds = { hw: facingGeom.hwEff, hh: facingGeom.hhEff, within: mode === "within" };
+      facingOpenBounds = { hw: facingGeom.hwEff, hh: facingGeom.hhEff, within: geomMode === "within" };
     }
-    facingPaths = generateFacingPaths(
-      useShape,
-      useParams,
-      cutParams.stepover,
-      toolRadius,
-      mode,
-      dir,
-      even
-    );
-    let phaseEnd = getLastPointFromPaths(facingPaths);
-    if (finishMode === "cross") {
-      const crossDir = dir === "y" ? "x" : "y";
-      let crossPaths = generateFacingPaths(
+    if (mode === "spiral") {
+      const spiralPath = generateFacingSpiralPath(useShape, useParams, cutParams.stepover, toolRadius);
+      facingPaths = spiralPath.length >= 2 ? [spiralPath] : [];
+    } else {
+      facingPaths = generateFacingPaths(
         useShape,
         useParams,
         cutParams.stepover,
         toolRadius,
         mode,
-        crossDir,
+        dir,
         even
       );
-      crossPaths = orientOpenPathsFromReference(crossPaths, phaseEnd);
-      if (crossPaths.length) facingPaths.push(...crossPaths);
-      phaseEnd = getLastPointFromPaths(facingPaths);
-    } else if (finishMode === "perimeter") {
-      let perimeterPath = generateFacingPerimeterPath(
-        useShape,
-        useParams,
-        toolRadius,
-        mode
-      );
-      perimeterPath = rotateClosedPathStartNear(perimeterPath, phaseEnd);
-      if (perimeterPath.length >= 2) facingPaths.push(perimeterPath);
+      let phaseEnd = getLastPointFromPaths(facingPaths);
+      if (finishMode === "cross") {
+        const crossDir = dir === "y" ? "x" : "y";
+        let crossPaths = generateFacingPaths(
+          useShape,
+          useParams,
+          cutParams.stepover,
+          toolRadius,
+          mode,
+          crossDir,
+          even
+        );
+        crossPaths = orientOpenPathsFromReference(crossPaths, phaseEnd);
+        if (crossPaths.length) facingPaths.push(...crossPaths);
+        phaseEnd = getLastPointFromPaths(facingPaths);
+      } else if (finishMode === "perimeter") {
+        let perimeterPath = generateFacingPerimeterPath(
+          useShape,
+          useParams,
+          toolRadius,
+          mode
+        );
+        perimeterPath = rotateClosedPathStartNear(perimeterPath, phaseEnd);
+        if (perimeterPath.length >= 2) facingPaths.push(perimeterPath);
+      }
     }
   }
 
@@ -4546,10 +4667,15 @@ function generateToolpath(params) {
         }
       } else if (operation === OperationType.FACING) {
         const toolRadiusFacing = cutParams.toolDiameter / 2;
+        const useFacingPlungeOutside = plungeOutside && entryMethod === EntryMethod.PLUNGE;
         facingPaths.forEach((path, idx) => {
+          let facingPath = path;
+          if (useFacingPlungeOutside && idx === 0 && path.length >= 2) {
+            facingPath = prependLinearPlungeLeadIn(path, cutParams.toolDiameter);
+          }
           addLayerForPath(
             moves,
-            path,
+            facingPath,
             depthZ,
             cutParams,
             false,
@@ -8967,6 +9093,7 @@ function setupUI() {
     const contourOnlyElems = document.querySelectorAll(".contour-only");
     const isDxfEngraving = isDxf && showContour && contourTypeSelect?.value === "engraving";
     const isCircularPatternHolesContour = showContour && shape === ShapeType.CIRCULAR_PATTERN_HOLES;
+    const isPlungeEntry = entryMethodInput?.value === EntryMethod.PLUNGE;
     if (isCircularPatternHolesContour && plungeOutsideInput) {
       plungeOutsideInput.value = "off";
       plungeOutsideButtons.forEach((b) => b.classList.toggle("entry-method-btn--active", b.dataset.plungeOutside === "off"));
@@ -8980,6 +9107,14 @@ function setupUI() {
       } else {
         el.classList.add("hidden");
       }
+    });
+
+    const showPlungeOutsideContour = showContour && isPlungeEntry && !isDxfEngraving && !isCircularPatternHolesContour;
+    const showPlungeOutsideFacing = showFacing && isPlungeEntry;
+    document.querySelectorAll(".plunge-outside-option").forEach((el) => {
+      const hideForDxf = el.classList.contains("plunge-outside-no-dxf") && isDxf;
+      const hideForCph = el.classList.contains("plunge-outside-no-circular-pattern-holes") && isCircularPatternHolesContour;
+      el.classList.toggle("hidden", !(showPlungeOutsideContour || showPlungeOutsideFacing) || hideForDxf || hideForCph);
     });
 
     const facingOnlyElems = document.querySelectorAll(".facing-only");
@@ -9085,11 +9220,13 @@ function setupUI() {
 
       if (value === EntryMethod.RAMP) {
         rampSettings.classList.remove("hidden");
-      } else if (value === EntryMethod.PLUNGE) {
+      } else {
         rampSettings.classList.add("hidden");
       }
       updateRampInputsDisabled();
       updateContourTabsRampHintVisibility();
+      updateContourTypeVisibility();
+      if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
     });
   });
   // init zichtbaarheid ramp-instellingen op basis van huidige entry-method
@@ -9114,6 +9251,8 @@ function setupUI() {
         b.classList.remove("entry-method-btn--active")
       );
       btn.classList.add("entry-method-btn--active");
+      updateContourTypeVisibility();
+      if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
     });
   });
 

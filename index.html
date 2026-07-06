@@ -543,6 +543,7 @@
               <select id="facing-mode" name="facing-mode">
                 <option value="within" selected data-i18n="form.facingWithin">Binnen (geen rand buiten gebied)</option>
                 <option value="full" data-i18n="form.facingFull">Helemaal bereiken (volledig vlak)</option>
+                <option value="spiral" data-i18n="form.facingSpiral">Volledige dekking (spiraal)</option>
               </select>
             </div>
             <div id="facing-direction-row" class="field-row facing-only hidden" data-mode="advanced">
@@ -866,7 +867,7 @@
               </div>
               <p id="contour-tabs-ramp-hint" class="contour-tabs-ramp-hint hidden" aria-live="polite" data-i18n="form.contourTabsRampHint">Bij contour met tabs en ramp kan de ramp door een tab heen lopen. Er is geen validatie op deze combinatie. Controleer het resultaat in de G-code preview.</p>
             </div>
-            <div class="field-row contour-only plunge-outside-no-dxf plunge-outside-no-circular-pattern-holes hidden">
+            <div class="field-row plunge-outside-option hidden plunge-outside-no-dxf plunge-outside-no-circular-pattern-holes">
               <span class="field-label" data-i18n="form.plungeOutside">Insteken naast part</span>
               <div class="plunge-outside-buttons" data-i18n-aria-label="form.plungeOutside">
                 <button
