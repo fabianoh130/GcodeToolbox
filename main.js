@@ -3847,12 +3847,14 @@ function generateToolpath(params) {
       const startY = cy;
 
       if (isFirstPass) {
-        moves.push({ x: startX, y: startY, z: safeZ, type: "rapid" });
-        if (safeZ > leadInAbove) {
-          moves.push({ x: startX, y: startY, z: leadInAbove, type: "rapid" });
+        moves.push({ x: cx, y: cy, z: safeZ, type: "rapid" });
+        if (safeZ > leadInAbove + 1e-6) {
+          moves.push({ x: cx, y: cy, z: leadInAbove, type: "rapid" });
         }
-      } else {
-        moves.push({ x: startX, y: startY, z: leadInAbove, type: "rapid" });
+      }
+      // Vanuit centrum op lead-in hoogte radiaal naar spiraalstart (feed).
+      if (Math.abs(startX - cx) > 1e-6 || Math.abs(startY - cy) > 1e-6) {
+        moves.push({ x: startX, y: startY, z: leadInAbove, type: "cut" });
       }
 
       let angle = 0;
