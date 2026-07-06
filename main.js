@@ -160,6 +160,16 @@ const ThreadMillType = {
   EXTERNAL: "external",
 };
 
+const ThreadCutDirection = {
+  BOTTOM_TO_TOP: "bottom_to_top",
+  TOP_TO_BOTTOM: "top_to_bottom",
+};
+
+const ThreadHand = {
+  RIGHT: "right_hand",
+  LEFT: "left_hand",
+};
+
 /**
  * Finish-straal freescentrum voor draadfrezen (mm).
  * Binnen: (major − tool) / 2; buiten: (major + tool) / 2.
@@ -170,9 +180,15 @@ function getThreadMillingFinishRadius(majorDia, toolDia, threadMillType) {
   return Math.max(0, r);
 }
 
-/** Draairichting helix: binnen CCW (+1), buiten CW (−1) voor climb milling. */
-function getThreadMillingHelixSign(threadMillType) {
-  return threadMillType === ThreadMillType.EXTERNAL ? -1 : 1;
+/**
+ * Draairichting helix voor metrische schroefdraad, gezien van boven.
+ * Rechtsdraads boven→onder: rechtsom (CW). Linksdraads: omgekeerd.
+ * Binnendraad gebruikt tegengestelde toolrotatie t.o.v. buitendraad (climb milling).
+ */
+function getThreadMillingHelixSign(threadMillType, cutBottomToTop, threadHand) {
+  const topToBottomSign = threadMillType === ThreadMillType.EXTERNAL ? -1 : 1;
+  const rhSign = cutBottomToTop ? -topToBottomSign : topToBottomSign;
+  return threadHand === ThreadHand.LEFT ? -rhSign : rhSign;
 }
 
 /** Benaderde kerfdiameter ISO-60° uitwendige metrische draad (mm). */
@@ -1102,6 +1118,8 @@ function readInputsFromForm() {
     shapeParams.threadSystem = g("thread-system")?.value || "metric";
     shapeParams.threadPreset = g("thread-preset")?.value || "";
     shapeParams.threadMillType = g("thread-mill-type")?.value || ThreadMillType.INTERNAL;
+    shapeParams.threadCutDirection = g("thread-cut-direction")?.value || ThreadCutDirection.BOTTOM_TO_TOP;
+    shapeParams.threadHand = g("thread-hand")?.value || ThreadHand.RIGHT;
   } else if (shape === ShapeType.PATTERNED_HOLES) {
     shapeParams.diameter = toMm(toNumber(g("patterned-holes-diameter")?.value), displayUnit);
     shapeParams.spacingX = toMm(toNumber(g("patterned-holes-spacing-x")?.value), displayUnit);
@@ -1323,7 +1341,7 @@ function getParamsSnapshotReadOnly() {
   else if (shape === ShapeType.HEXAGON) sp.height = vm("hexagon-height");
   else if (shape === ShapeType.LETTERS) { sp.text = el("letter-text")?.value || ""; sp.fontSize = vm("letter-size") || 10; sp.letterOrientation = v("letter-orientation") || 0; }
   else if (shape === ShapeType.COUNTERBORE_BOLT) { sp.headDiameter = vm("counterbore-head-diameter"); sp.counterboreDepth = vm("counterbore-depth"); sp.boltDiameter = vm("counterbore-bolt-diameter"); const td = vm("total-depth"); sp.boltHoleDepth = Math.max(0, (td || 0) - (sp.counterboreDepth || 0)); }
-  else if (shape === ShapeType.THREAD_MILLING) { sp.majorDiameter = vm("thread-major-diameter"); sp.pitch = vm("thread-pitch"); sp.holeDiameter = vm("thread-hole-diameter"); sp.threadDepth = vm("thread-milling-depth"); sp.threadSystem = el("thread-system")?.value || "metric"; sp.threadPreset = el("thread-preset")?.value || ""; sp.threadMillType = el("thread-mill-type")?.value || ThreadMillType.INTERNAL; }
+  else if (shape === ShapeType.THREAD_MILLING) { sp.majorDiameter = vm("thread-major-diameter"); sp.pitch = vm("thread-pitch"); sp.holeDiameter = vm("thread-hole-diameter"); sp.threadDepth = vm("thread-milling-depth"); sp.threadSystem = el("thread-system")?.value || "metric"; sp.threadPreset = el("thread-preset")?.value || ""; sp.threadMillType = el("thread-mill-type")?.value || ThreadMillType.INTERNAL; sp.threadCutDirection = el("thread-cut-direction")?.value || ThreadCutDirection.BOTTOM_TO_TOP; sp.threadHand = el("thread-hand")?.value || ThreadHand.RIGHT; }
   else if (shape === ShapeType.PATTERNED_HOLES) { sp.diameter = vm("patterned-holes-diameter"); sp.spacingX = vm("patterned-holes-spacing-x"); sp.spacingY = vm("patterned-holes-spacing-y"); sp.countX = Math.max(1, Math.floor(v("patterned-holes-count-x") || 1)); sp.countY = Math.max(1, Math.floor(v("patterned-holes-count-y") || 1)); }
   else if (shape === ShapeType.CIRCULAR_PATTERN_HOLES) { sp.count = Math.max(1, Math.floor(v("circular-pattern-holes-count") || 6)); sp.diameter = vm("circular-pattern-holes-diameter"); sp.circleDiameter = vm("circular-pattern-holes-circle-diameter"); sp.startAngle = Math.max(0, Math.min(360, v("circular-pattern-holes-start-angle") || 0)); sp.holeInCenter = el("circular-pattern-holes-center-hole")?.checked ?? false; sp.centerHoleDiameter = sp.holeInCenter ? vm("circular-pattern-holes-center-diameter") : 0; }
   else if (shape === ShapeType.DXF) { sp.type = "dxf"; sp.dxfOrientation = v("dxf-orientation") || 0; }
@@ -1682,10 +1700,10 @@ function computeDepthLevels(totalDepth, stepdown) {
   const numLayers = Math.max(1, Math.ceil(totalDepth / stepdown));
   const layerHeight = totalDepth / numLayers;
   const depths = [];
-  const round1 = (v) => Math.round(v * 10) / 10;
+  const roundDepth = (v) => Math.round(v * 1000) / 1000;
   for (let i = 1; i <= numLayers; i++) {
     const z = i === numLayers ? -totalDepth : -i * layerHeight;
-    depths.push(-round1(Math.abs(z)));
+    depths.push(-roundDepth(Math.abs(z)));
   }
   return depths;
 }
@@ -2765,6 +2783,7 @@ function generateFacingPaths(shape, shapeParams, stepover, toolRadius, facingMod
   return paths;
 }
 
+
 /**
  * Berekent een compacte helix-ramp op het strip-startpunt voor facing.
  * Houdt bij modus "within" de helix binnen het effectieve werkvlak.
@@ -3818,17 +3837,25 @@ function generateToolpath(params) {
     const threadDepth = shapeParams.threadDepth;
     const holeDia = shapeParams.holeDiameter;
     const threadMillType = shapeParams.threadMillType || ThreadMillType.INTERNAL;
+    const cutBottomToTop = (shapeParams.threadCutDirection || ThreadCutDirection.BOTTOM_TO_TOP)
+      !== ThreadCutDirection.TOP_TO_BOTTOM;
     const toolDia = cutParams.toolDiameter;
     const stepover = cutParams.stepover;
     const safeZ = cutParams.safeHeight;
     const leadInAbove = Math.max(0, cutParams.leadInAboveMm ?? 2);
-    const helixSign = getThreadMillingHelixSign(threadMillType);
+    const helixSign = getThreadMillingHelixSign(
+      threadMillType,
+      cutBottomToTop,
+      shapeParams.threadHand || ThreadHand.RIGHT
+    );
     const cx = 0;
     const cy = 0;
-    const zStart = leadInAbove;
-    const zEnd = -threadDepth;
-    const totalZDrop = zStart - zEnd;
-    const totalRevolutions = totalZDrop / pitch;
+    const threadBottomZ = -threadDepth;
+    const approachZ = leadInAbove;
+    const helixStartZ = cutBottomToTop ? threadBottomZ : approachZ;
+    const helixEndZ = cutBottomToTop ? approachZ : threadBottomZ;
+    const totalZSpan = Math.abs(helixEndZ - helixStartZ);
+    const totalRevolutions = totalZSpan / pitch;
     const totalAngle = totalRevolutions * 2 * Math.PI;
 
     const rFinish = getThreadMillingFinishRadius(majorDia, toolDia, threadMillType);
@@ -3842,21 +3869,44 @@ function generateToolpath(params) {
       const segs = segmentsForCircleRadius(pathRadius);
       const totalSteps = Math.max(segs, Math.ceil(totalRevolutions * segs));
       const deltaAngle = (helixSign * totalAngle) / totalSteps;
-      const deltaZ = (zEnd - zStart) / totalSteps;
+      const deltaZ = (helixEndZ - helixStartZ) / totalSteps;
       const startX = cx + pathRadius;
       const startY = cy;
+      const isExternal = threadMillType === ThreadMillType.EXTERNAL;
 
-      if (isFirstPass) {
-        moves.push({ x: startX, y: startY, z: safeZ, type: "rapid" });
-        if (safeZ > leadInAbove) {
-          moves.push({ x: startX, y: startY, z: leadInAbove, type: "rapid" });
+      if (isExternal) {
+        // Buitendraad: centrum is massief — nooit door het midden op snijdiepte.
+        if (isFirstPass) {
+          moves.push({ x: cx, y: cy, z: safeZ, type: "rapid" });
+          if (safeZ > approachZ + 1e-6) {
+            moves.push({ x: cx, y: cy, z: approachZ, type: "rapid" });
+          }
+        }
+        const prev = moves[moves.length - 1];
+        if (Math.hypot(prev.x - startX, prev.y - startY) > 1e-6 || Math.abs(prev.z - approachZ) > 1e-6) {
+          moves.push({ x: startX, y: startY, z: approachZ, type: "rapid" });
+        }
+        if (cutBottomToTop && Math.abs(approachZ - threadBottomZ) > 1e-6) {
+          moves.push({ x: startX, y: startY, z: threadBottomZ, type: "rapid" });
         }
       } else {
-        moves.push({ x: startX, y: startY, z: leadInAbove, type: "rapid" });
+        if (isFirstPass) {
+          moves.push({ x: cx, y: cy, z: safeZ, type: "rapid" });
+          if (safeZ > approachZ + 1e-6) {
+            moves.push({ x: cx, y: cy, z: approachZ, type: "rapid" });
+          }
+        }
+        // Binnendraad: insteken via centrum op feed.
+        if (cutBottomToTop && Math.abs(approachZ - threadBottomZ) > 1e-6) {
+          moves.push({ x: cx, y: cy, z: threadBottomZ, type: "cut" });
+        }
+        if (Math.abs(startX - cx) > 1e-6 || Math.abs(startY - cy) > 1e-6) {
+          moves.push({ x: startX, y: startY, z: helixStartZ, type: "cut" });
+        }
       }
 
       let angle = 0;
-      let z = zStart;
+      let z = helixStartZ;
       for (let i = 0; i < totalSteps; i++) {
         angle += deltaAngle;
         z += deltaZ;
@@ -3868,9 +3918,7 @@ function generateToolpath(params) {
         });
       }
 
-      const bottomZ = zEnd;
       const last = moves[moves.length - 1];
-      const isExternal = threadMillType === ThreadMillType.EXTERNAL;
       if (isExternal) {
         const lx = last.x;
         const ly = last.y;
@@ -3880,18 +3928,25 @@ function generateToolpath(params) {
         const retractX = cx + (lx - cx) * scale;
         const retractY = cy + (ly - cy) * scale;
         if (Math.hypot(lx - retractX, ly - retractY) > 1e-6) {
-          moves.push({ x: retractX, y: retractY, z: bottomZ, type: "rapid" });
+          moves.push({ x: retractX, y: retractY, z: helixEndZ, type: "rapid" });
         }
-        const retractZ = isLastPass ? safeZ : leadInAbove;
-        moves.push({ x: retractX, y: retractY, z: retractZ, type: "rapid" });
+        if (!cutBottomToTop && Math.abs(threadBottomZ - approachZ) > 1e-6) {
+          moves.push({ x: retractX, y: retractY, z: approachZ, type: "rapid" });
+        }
+        if (isLastPass && safeZ > approachZ + 1e-6) {
+          moves.push({ x: retractX, y: retractY, z: safeZ, type: "rapid" });
+        }
       } else {
+        // Helix eindigt op de baanradius; eerst radiaal naar draadcentrum op einddiepte (feed).
         if (Math.abs(last.x - cx) > 1e-6 || Math.abs(last.y - cy) > 1e-6) {
-          moves.push({ x: cx, y: cy, z: bottomZ, type: "rapid" });
+          moves.push({ x: cx, y: cy, z: helixEndZ, type: "cut" });
         }
-        if (isLastPass) {
+        // Boven→onder: uit op feed rate tot lead-in hoogte (geen rapid uit het gat).
+        if (!cutBottomToTop && Math.abs(threadBottomZ - approachZ) > 1e-6) {
+          moves.push({ x: cx, y: cy, z: approachZ, type: "cut" });
+        }
+        if (isLastPass && safeZ > approachZ + 1e-6) {
           moves.push({ x: cx, y: cy, z: safeZ, type: "rapid" });
-        } else {
-          moves.push({ x: cx, y: cy, z: leadInAbove, type: "rapid" });
         }
       }
     });
@@ -7154,7 +7209,7 @@ const CHAIN_CAPTURE_FIELD_IDS = [
   "rounded-corner-radius", "hexagon-height", "ellipse-major", "ellipse-minor",
   "letter-text", "letter-size", "letter-mode", "letter-orientation",
   "counterbore-head-diameter", "counterbore-depth", "counterbore-bolt-diameter",
-  "thread-system", "thread-preset", "thread-mill-type", "thread-major-diameter", "thread-pitch",
+  "thread-system", "thread-preset", "thread-mill-type", "thread-hand", "thread-cut-direction", "thread-major-diameter", "thread-pitch",
   "thread-hole-diameter", "thread-milling-depth",
   "patterned-holes-preset", "patterned-holes-diameter", "patterned-holes-spacing-x", "patterned-holes-spacing-y",
   "patterned-holes-count-x", "patterned-holes-count-y",
@@ -8501,6 +8556,10 @@ function setupUI() {
       if (presetEl) presetEl.value = "M6";
       const typeEl = /** @type {HTMLSelectElement | null} */ (document.getElementById("thread-mill-type"));
       if (typeEl) typeEl.value = ThreadMillType.INTERNAL;
+      const cutDirEl = /** @type {HTMLSelectElement | null} */ (document.getElementById("thread-cut-direction"));
+      if (cutDirEl) cutDirEl.value = ThreadCutDirection.BOTTOM_TO_TOP;
+      const handEl = /** @type {HTMLSelectElement | null} */ (document.getElementById("thread-hand"));
+      if (handEl) handEl.value = ThreadHand.RIGHT;
       applyThreadPreset("M6");
     }
 
@@ -9027,11 +9086,13 @@ function setupUI() {
 
       if (value === EntryMethod.RAMP) {
         rampSettings.classList.remove("hidden");
-      } else if (value === EntryMethod.PLUNGE) {
+      } else {
         rampSettings.classList.add("hidden");
       }
       updateRampInputsDisabled();
       updateContourTabsRampHintVisibility();
+      updateContourTypeVisibility();
+      if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
     });
   });
   // init zichtbaarheid ramp-instellingen op basis van huidige entry-method
@@ -9056,6 +9117,8 @@ function setupUI() {
         b.classList.remove("entry-method-btn--active")
       );
       btn.classList.add("entry-method-btn--active");
+      updateContourTypeVisibility();
+      if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
     });
   });
 

@@ -12,7 +12,7 @@
     <header class="app-header">
       <div class="app-header-inner">
         <div>
-          <h1><span data-i18n="header.title">Gcode toolbox</span> <a href="https://github.com/fabianoh130/GcodeToolbox" target="_blank" rel="noopener noreferrer" class="app-version" data-i18n-title="header.checkForUpdates" title="Check for updates">v4.0</a></h1>
+          <h1><span data-i18n="header.title">Gcode toolbox</span> <a href="https://github.com/fabianoh130/GcodeToolbox" target="_blank" rel="noopener noreferrer" class="app-version" data-i18n-title="header.checkForUpdates" title="Check for updates">v4.1</a></h1>
         </div>
         <div class="settings-menu-wrapper">
           <button
@@ -444,6 +444,20 @@
                 <select id="thread-mill-type" name="thread-mill-type">
                   <option value="internal" data-i18n="form.threadMillTypeInternal">Binnendraad</option>
                   <option value="external" data-i18n="form.threadMillTypeExternal">Buitendraad</option>
+                </select>
+              </div>
+              <div class="field-row shape-field shape-thread-milling hidden">
+                <label for="thread-hand" data-i18n="form.threadHand">Draadwijze</label>
+                <select id="thread-hand" name="thread-hand">
+                  <option value="right_hand" data-i18n="form.threadHandRight" selected>Rechtsom (rechtsdraads)</option>
+                  <option value="left_hand" data-i18n="form.threadHandLeft">Linksom (linksdraads)</option>
+                </select>
+              </div>
+              <div class="field-row shape-field shape-thread-milling hidden">
+                <label for="thread-cut-direction" data-i18n="form.threadCutDirection">Snijrichting draad</label>
+                <select id="thread-cut-direction" name="thread-cut-direction">
+                  <option value="bottom_to_top" data-i18n="form.threadCutDirectionBottomTop" selected>Onder naar boven</option>
+                  <option value="top_to_bottom" data-i18n="form.threadCutDirectionTopBottom">Boven naar onder</option>
                 </select>
               </div>
               <div class="field-row shape-field shape-thread-milling hidden">
