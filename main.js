@@ -175,9 +175,14 @@ function getThreadMillingFinishRadius(majorDia, toolDia, threadMillType) {
   return Math.max(0, r);
 }
 
-/** Draairichting helix: binnen CCW (+1), buiten CW (−1) voor climb milling. */
-function getThreadMillingHelixSign(threadMillType) {
-  return threadMillType === ThreadMillType.EXTERNAL ? -1 : 1;
+/**
+ * Draairichting helix voor rechtsdraadse (RH) metrische draad, gezien van boven.
+ * Boven→onder: rechtsom (CW). Onder→boven: linksom (CCW).
+ * Binnendraad gebruikt tegengestelde toolrotatie t.o.v. buitendraad (climb milling).
+ */
+function getThreadMillingHelixSign(threadMillType, cutBottomToTop) {
+  const topToBottomSign = threadMillType === ThreadMillType.EXTERNAL ? -1 : 1;
+  return cutBottomToTop ? -topToBottomSign : topToBottomSign;
 }
 
 /** Benaderde kerfdiameter ISO-60° uitwendige metrische draad (mm). */
@@ -3830,7 +3835,7 @@ function generateToolpath(params) {
     const stepover = cutParams.stepover;
     const safeZ = cutParams.safeHeight;
     const leadInAbove = Math.max(0, cutParams.leadInAboveMm ?? 2);
-    const helixSign = getThreadMillingHelixSign(threadMillType);
+    const helixSign = getThreadMillingHelixSign(threadMillType, cutBottomToTop);
     const cx = 0;
     const cy = 0;
     const threadBottomZ = -threadDepth;
