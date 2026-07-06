@@ -1185,12 +1185,33 @@ body.theme-light .outline-hint--warning {
   display: none !important;
 }
 
-/* Operation chain: steps bar */
+/* Operation chain: steps bar (visueel verlengstuk van de header) */
 body[data-chain-mode="off"] #chain-steps-bar {
   display: none !important;
 }
 
+body[data-chain-mode="on"] .app-header {
+  border-radius: 22px 22px 0 0;
+  border-bottom: none;
+  box-shadow: none;
+  padding-bottom: 16px;
+}
+
 .chain-steps-bar {
+  padding: 10px 24px 14px;
+}
+
+body[data-chain-mode="on"] .chain-steps-bar {
+  margin-top: 0;
+  border-radius: 0 0 22px 22px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(17, 24, 39, 0.95));
+  backdrop-filter: blur(18px);
+  box-shadow: var(--shadow-soft);
+}
+
+body[data-chain-mode="off"] .chain-steps-bar {
   border-bottom: 1px solid var(--border-subtle, #1e293b);
   background: var(--panel-bg, #0f172a);
   padding: 10px 16px 8px;
@@ -1326,6 +1347,17 @@ fieldset.chain-locked {
 fieldset.chain-locked select,
 fieldset.chain-locked input {
   pointer-events: none;
+}
+
+body.theme-light[data-chain-mode="on"] .app-header {
+  box-shadow: none;
+}
+
+body.theme-light[data-chain-mode="on"] .chain-steps-bar {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(249, 250, 251, 0.98));
+  border-color: rgba(148, 163, 184, 0.5);
+  border-top-color: rgba(148, 163, 184, 0.25);
+  box-shadow: 0 18px 40px rgba(148, 163, 184, 0.35);
 }
 
 body.theme-light .chain-steps-bar {
