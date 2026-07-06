@@ -165,6 +165,11 @@ const ThreadCutDirection = {
   TOP_TO_BOTTOM: "top_to_bottom",
 };
 
+const ThreadHand = {
+  RIGHT: "right_hand",
+  LEFT: "left_hand",
+};
+
 /**
  * Finish-straal freescentrum voor draadfrezen (mm).
  * Binnen: (major − tool) / 2; buiten: (major + tool) / 2.
@@ -176,13 +181,14 @@ function getThreadMillingFinishRadius(majorDia, toolDia, threadMillType) {
 }
 
 /**
- * Draairichting helix voor rechtsdraadse (RH) metrische draad, gezien van boven.
- * Boven→onder: rechtsom (CW). Onder→boven: linksom (CCW).
+ * Draairichting helix voor metrische schroefdraad, gezien van boven.
+ * Rechtsdraads boven→onder: rechtsom (CW). Linksdraads: omgekeerd.
  * Binnendraad gebruikt tegengestelde toolrotatie t.o.v. buitendraad (climb milling).
  */
-function getThreadMillingHelixSign(threadMillType, cutBottomToTop) {
+function getThreadMillingHelixSign(threadMillType, cutBottomToTop, threadHand) {
   const topToBottomSign = threadMillType === ThreadMillType.EXTERNAL ? -1 : 1;
-  return cutBottomToTop ? -topToBottomSign : topToBottomSign;
+  const rhSign = cutBottomToTop ? -topToBottomSign : topToBottomSign;
+  return threadHand === ThreadHand.LEFT ? -rhSign : rhSign;
 }
 
 /** Benaderde kerfdiameter ISO-60° uitwendige metrische draad (mm). */
@@ -1113,6 +1119,7 @@ function readInputsFromForm() {
     shapeParams.threadPreset = g("thread-preset")?.value || "";
     shapeParams.threadMillType = g("thread-mill-type")?.value || ThreadMillType.INTERNAL;
     shapeParams.threadCutDirection = g("thread-cut-direction")?.value || ThreadCutDirection.BOTTOM_TO_TOP;
+    shapeParams.threadHand = g("thread-hand")?.value || ThreadHand.RIGHT;
   } else if (shape === ShapeType.PATTERNED_HOLES) {
     shapeParams.diameter = toMm(toNumber(g("patterned-holes-diameter")?.value), displayUnit);
     shapeParams.spacingX = toMm(toNumber(g("patterned-holes-spacing-x")?.value), displayUnit);
@@ -1334,7 +1341,7 @@ function getParamsSnapshotReadOnly() {
   else if (shape === ShapeType.HEXAGON) sp.height = vm("hexagon-height");
   else if (shape === ShapeType.LETTERS) { sp.text = el("letter-text")?.value || ""; sp.fontSize = vm("letter-size") || 10; sp.letterOrientation = v("letter-orientation") || 0; }
   else if (shape === ShapeType.COUNTERBORE_BOLT) { sp.headDiameter = vm("counterbore-head-diameter"); sp.counterboreDepth = vm("counterbore-depth"); sp.boltDiameter = vm("counterbore-bolt-diameter"); const td = vm("total-depth"); sp.boltHoleDepth = Math.max(0, (td || 0) - (sp.counterboreDepth || 0)); }
-  else if (shape === ShapeType.THREAD_MILLING) { sp.majorDiameter = vm("thread-major-diameter"); sp.pitch = vm("thread-pitch"); sp.holeDiameter = vm("thread-hole-diameter"); sp.threadDepth = vm("thread-milling-depth"); sp.threadSystem = el("thread-system")?.value || "metric"; sp.threadPreset = el("thread-preset")?.value || ""; sp.threadMillType = el("thread-mill-type")?.value || ThreadMillType.INTERNAL; sp.threadCutDirection = el("thread-cut-direction")?.value || ThreadCutDirection.BOTTOM_TO_TOP; }
+  else if (shape === ShapeType.THREAD_MILLING) { sp.majorDiameter = vm("thread-major-diameter"); sp.pitch = vm("thread-pitch"); sp.holeDiameter = vm("thread-hole-diameter"); sp.threadDepth = vm("thread-milling-depth"); sp.threadSystem = el("thread-system")?.value || "metric"; sp.threadPreset = el("thread-preset")?.value || ""; sp.threadMillType = el("thread-mill-type")?.value || ThreadMillType.INTERNAL; sp.threadCutDirection = el("thread-cut-direction")?.value || ThreadCutDirection.BOTTOM_TO_TOP; sp.threadHand = el("thread-hand")?.value || ThreadHand.RIGHT; }
   else if (shape === ShapeType.PATTERNED_HOLES) { sp.diameter = vm("patterned-holes-diameter"); sp.spacingX = vm("patterned-holes-spacing-x"); sp.spacingY = vm("patterned-holes-spacing-y"); sp.countX = Math.max(1, Math.floor(v("patterned-holes-count-x") || 1)); sp.countY = Math.max(1, Math.floor(v("patterned-holes-count-y") || 1)); }
   else if (shape === ShapeType.CIRCULAR_PATTERN_HOLES) { sp.count = Math.max(1, Math.floor(v("circular-pattern-holes-count") || 6)); sp.diameter = vm("circular-pattern-holes-diameter"); sp.circleDiameter = vm("circular-pattern-holes-circle-diameter"); sp.startAngle = Math.max(0, Math.min(360, v("circular-pattern-holes-start-angle") || 0)); sp.holeInCenter = el("circular-pattern-holes-center-hole")?.checked ?? false; sp.centerHoleDiameter = sp.holeInCenter ? vm("circular-pattern-holes-center-diameter") : 0; }
   else if (shape === ShapeType.DXF) { sp.type = "dxf"; sp.dxfOrientation = v("dxf-orientation") || 0; }
@@ -3835,7 +3842,11 @@ function generateToolpath(params) {
     const stepover = cutParams.stepover;
     const safeZ = cutParams.safeHeight;
     const leadInAbove = Math.max(0, cutParams.leadInAboveMm ?? 2);
-    const helixSign = getThreadMillingHelixSign(threadMillType, cutBottomToTop);
+    const helixSign = getThreadMillingHelixSign(
+      threadMillType,
+      cutBottomToTop,
+      shapeParams.threadHand || ThreadHand.RIGHT
+    );
     const cx = 0;
     const cy = 0;
     const threadBottomZ = -threadDepth;
@@ -7197,7 +7208,7 @@ const CHAIN_CAPTURE_FIELD_IDS = [
   "rounded-corner-radius", "hexagon-height", "ellipse-major", "ellipse-minor",
   "letter-text", "letter-size", "letter-mode", "letter-orientation",
   "counterbore-head-diameter", "counterbore-depth", "counterbore-bolt-diameter",
-  "thread-system", "thread-preset", "thread-mill-type", "thread-cut-direction", "thread-major-diameter", "thread-pitch",
+  "thread-system", "thread-preset", "thread-mill-type", "thread-hand", "thread-cut-direction", "thread-major-diameter", "thread-pitch",
   "thread-hole-diameter", "thread-milling-depth",
   "patterned-holes-preset", "patterned-holes-diameter", "patterned-holes-spacing-x", "patterned-holes-spacing-y",
   "patterned-holes-count-x", "patterned-holes-count-y",
@@ -8546,6 +8557,8 @@ function setupUI() {
       if (typeEl) typeEl.value = ThreadMillType.INTERNAL;
       const cutDirEl = /** @type {HTMLSelectElement | null} */ (document.getElementById("thread-cut-direction"));
       if (cutDirEl) cutDirEl.value = ThreadCutDirection.BOTTOM_TO_TOP;
+      const handEl = /** @type {HTMLSelectElement | null} */ (document.getElementById("thread-hand"));
+      if (handEl) handEl.value = ThreadHand.RIGHT;
       applyThreadPreset("M6");
     }
 
