@@ -3855,20 +3855,37 @@ function generateToolpath(params) {
       const deltaZ = (helixEndZ - helixStartZ) / totalSteps;
       const startX = cx + pathRadius;
       const startY = cy;
+      const isExternal = threadMillType === ThreadMillType.EXTERNAL;
 
-      if (isFirstPass) {
-        moves.push({ x: cx, y: cy, z: safeZ, type: "rapid" });
-        if (safeZ > approachZ + 1e-6) {
-          moves.push({ x: cx, y: cy, z: approachZ, type: "rapid" });
+      if (isExternal) {
+        // Buitendraad: centrum is massief — nooit door het midden op snijdiepte.
+        if (isFirstPass) {
+          moves.push({ x: cx, y: cy, z: safeZ, type: "rapid" });
+          if (safeZ > approachZ + 1e-6) {
+            moves.push({ x: cx, y: cy, z: approachZ, type: "rapid" });
+          }
         }
-      }
-      // Onder→boven: eerst op feed naar bodem in het centrum, daarna radiaal naar spiraalstart.
-      if (cutBottomToTop && Math.abs(approachZ - threadBottomZ) > 1e-6) {
-        moves.push({ x: cx, y: cy, z: threadBottomZ, type: "cut" });
-      }
-      // Vanuit centrum op helix-startdiepte radiaal naar spiraalstart (feed).
-      if (Math.abs(startX - cx) > 1e-6 || Math.abs(startY - cy) > 1e-6) {
-        moves.push({ x: startX, y: startY, z: helixStartZ, type: "cut" });
+        const prev = moves[moves.length - 1];
+        if (Math.hypot(prev.x - startX, prev.y - startY) > 1e-6 || Math.abs(prev.z - approachZ) > 1e-6) {
+          moves.push({ x: startX, y: startY, z: approachZ, type: "rapid" });
+        }
+        if (cutBottomToTop && Math.abs(approachZ - threadBottomZ) > 1e-6) {
+          moves.push({ x: startX, y: startY, z: threadBottomZ, type: "rapid" });
+        }
+      } else {
+        if (isFirstPass) {
+          moves.push({ x: cx, y: cy, z: safeZ, type: "rapid" });
+          if (safeZ > approachZ + 1e-6) {
+            moves.push({ x: cx, y: cy, z: approachZ, type: "rapid" });
+          }
+        }
+        // Binnendraad: insteken via centrum op feed.
+        if (cutBottomToTop && Math.abs(approachZ - threadBottomZ) > 1e-6) {
+          moves.push({ x: cx, y: cy, z: threadBottomZ, type: "cut" });
+        }
+        if (Math.abs(startX - cx) > 1e-6 || Math.abs(startY - cy) > 1e-6) {
+          moves.push({ x: startX, y: startY, z: helixStartZ, type: "cut" });
+        }
       }
 
       let angle = 0;
@@ -3885,7 +3902,6 @@ function generateToolpath(params) {
       }
 
       const last = moves[moves.length - 1];
-      const isExternal = threadMillType === ThreadMillType.EXTERNAL;
       if (isExternal) {
         const lx = last.x;
         const ly = last.y;
@@ -3898,7 +3914,7 @@ function generateToolpath(params) {
           moves.push({ x: retractX, y: retractY, z: helixEndZ, type: "rapid" });
         }
         if (!cutBottomToTop && Math.abs(threadBottomZ - approachZ) > 1e-6) {
-          moves.push({ x: retractX, y: retractY, z: approachZ, type: "cut" });
+          moves.push({ x: retractX, y: retractY, z: approachZ, type: "rapid" });
         }
         if (isLastPass && safeZ > approachZ + 1e-6) {
           moves.push({ x: retractX, y: retractY, z: safeZ, type: "rapid" });
