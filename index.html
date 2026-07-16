@@ -1009,14 +1009,17 @@
     <div class="dxf-support-modal">
       <div class="dxf-support-header">
         <h2 id="dxf-support-title" data-i18n="dxfSupport.title">Support-gaten plaatsen</h2>
-        <p class="dxf-support-intro" data-i18n="dxfSupport.intro">Klik op het bovenaanzicht om support-gaten te plaatsen. Rechtsklik of Shift+klik om een punt te verwijderen.</p>
+        <p class="dxf-support-intro" data-i18n="dxfSupport.intro">Klik op het bovenaanzicht om support-gaten te plaatsen. Schakel naar pauze-modus om de M0-wachtpositie te kiezen (safe height). Rechtsklik of Shift+klik om te verwijderen.</p>
       </div>
       <div class="dxf-support-canvas-wrap">
         <canvas id="dxf-support-canvas" width="900" height="600" aria-label="DXF bovenaanzicht"></canvas>
       </div>
       <div class="dxf-support-toolbar">
+        <button type="button" id="dxf-support-mode-holes" class="dxf-support-toolbar-btn dxf-support-mode-btn dxf-support-mode-btn--active" data-dxf-support-mode="holes" data-i18n="dxfSupport.modeHoles">Gaten</button>
+        <button type="button" id="dxf-support-mode-pause" class="dxf-support-toolbar-btn dxf-support-mode-btn" data-dxf-support-mode="pause" data-i18n="dxfSupport.modePause">Pauze</button>
         <button type="button" id="dxf-support-undo-btn" class="dxf-support-toolbar-btn" data-i18n="dxfSupport.undo">Laatste verwijderen</button>
         <button type="button" id="dxf-support-clear-btn" class="dxf-support-toolbar-btn" data-i18n="dxfSupport.clear">Alles wissen</button>
+        <button type="button" id="dxf-support-clear-pause-btn" class="dxf-support-toolbar-btn" data-i18n="dxfSupport.clearPause">Pauze wissen</button>
         <span id="dxf-support-popup-count" class="dxf-support-popup-count"></span>
       </div>
       <div class="dxf-support-actions">

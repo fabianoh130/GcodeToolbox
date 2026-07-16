@@ -1752,6 +1752,12 @@ body[data-display-mode="simple"] #gcode-form [data-mode="advanced"] {
   filter: brightness(1.05);
 }
 
+.dxf-support-mode-btn--active {
+  background: var(--accent-soft);
+  border-color: rgba(56, 189, 248, 0.8);
+  color: var(--accent);
+}
+
 .dxf-support-popup-count {
   font-size: 0.85rem;
   color: var(--text-soft);
