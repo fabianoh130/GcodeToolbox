@@ -221,6 +221,64 @@ const EntryMethod = {
 
 const DEFAULT_SAFE_Z = 10; // mm, standaard veilige hoogte (overschrijfbaar via formulier)
 const DEFAULT_ENTRY_SPEED_PCT = 33; // standaard plunge/ramp als % van feedrate
+
+/** @type {"percent"|"feed"} */
+let entrySpeedUnitMemory = "percent";
+
+/**
+ * Past min/max/step van het entry-speed veld aan zonder de waarde te wijzigen.
+ * @param {"percent"|"feed"} unit
+ */
+function syncEntrySpeedInputConstraints(unit) {
+  const entrySpeedInput = /** @type {HTMLInputElement | null} */ (document.getElementById("entry-speed"));
+  const entrySpeedWrapper = document.getElementById("entry-speed-input-wrapper");
+  if (!entrySpeedInput || !entrySpeedWrapper) return;
+  const displayUnit = getDisplayUnit();
+  if (unit === "feed") {
+    entrySpeedInput.min = "1";
+    entrySpeedInput.removeAttribute("max");
+    entrySpeedInput.step = "any";
+    entrySpeedWrapper.setAttribute("data-step", displayUnit === "inch" ? "1" : "50");
+    entrySpeedWrapper.setAttribute("data-min", "1");
+    entrySpeedWrapper.removeAttribute("data-max");
+  } else {
+    entrySpeedInput.min = "5";
+    entrySpeedInput.max = "200";
+    entrySpeedInput.step = "any";
+    entrySpeedWrapper.setAttribute("data-step", "10");
+    entrySpeedWrapper.setAttribute("data-min", "5");
+    entrySpeedWrapper.setAttribute("data-max", "200");
+  }
+}
+
+/**
+ * Zet entry-speed waarde om bij wisselen tussen % en absolute feed.
+ * @param {"percent"|"feed"} fromUnit
+ * @param {"percent"|"feed"} toUnit
+ */
+function convertEntrySpeedBetweenUnits(fromUnit, toUnit) {
+  if (fromUnit === toUnit) return;
+  const entrySpeedInput = /** @type {HTMLInputElement | null} */ (document.getElementById("entry-speed"));
+  const feedrateInput = /** @type {HTMLInputElement | null} */ (document.getElementById("feedrate"));
+  if (!entrySpeedInput || !feedrateInput) return;
+  const displayUnit = getDisplayUnit();
+  const feedDisplay = toNumber(feedrateInput.value);
+  const feedMm = toMm(feedDisplay, displayUnit);
+  const currentVal = toNumber(entrySpeedInput.value);
+  if (toUnit === "feed") {
+    const pct = Number.isFinite(currentVal) ? currentVal : DEFAULT_ENTRY_SPEED_PCT;
+    const feedAbs = Number.isFinite(feedMm) && feedMm > 0 ? (pct / 100) * feedDisplay : feedDisplay;
+    entrySpeedInput.value = String(displayUnit === "inch"
+      ? Math.round(feedAbs * 100) / 100
+      : Math.round(feedAbs));
+  } else {
+    const entryFeedMm = toMm(currentVal, displayUnit);
+    const pct = Number.isFinite(feedMm) && feedMm > 0 && Number.isFinite(entryFeedMm)
+      ? Math.round((entryFeedMm / feedMm) * 100)
+      : DEFAULT_ENTRY_SPEED_PCT;
+    entrySpeedInput.value = String(Math.min(200, Math.max(5, pct)));
+  }
+}
 const GCODE_TOOLBOX_URL = "https://fabianoh130.github.io/GcodeToolbox/";
 
 /** Conversie display-eenheid naar mm (intern). */
@@ -7389,7 +7447,8 @@ function applyFormStateForChain(formState) {
   );
   if (entrySpeedRadio) {
     entrySpeedRadio.checked = true;
-    entrySpeedRadio.dispatchEvent(new Event("change", { bubbles: true }));
+    entrySpeedUnitMemory = formState.entrySpeedUnit === "feed" ? "feed" : "percent";
+    syncEntrySpeedInputConstraints(entrySpeedUnitMemory);
   }
   const entryHidden = /** @type {HTMLInputElement|null} */ (document.getElementById("entry-method"));
   const entryVal = formState.entryMethod || EntryMethod.PLUNGE;
@@ -9402,36 +9461,12 @@ function setupUI() {
   entrySpeedUnitRadios.forEach((radio) => {
     radio.tabIndex = -1;
     radio.addEventListener("change", () => {
-      if (!entrySpeedInput || !entrySpeedWrapper || !feedrateInput) return;
-      const displayUnit = getDisplayUnit();
-      const feedDisplay = toNumber(feedrateInput.value);
-      const feedMm = toMm(feedDisplay, displayUnit);
-      const currentVal = toNumber(entrySpeedInput.value);
-      if (radio.value === "feed") {
-        const pct = Number.isFinite(currentVal) ? currentVal : DEFAULT_ENTRY_SPEED_PCT;
-        const feedAbs = Number.isFinite(feedMm) && feedMm > 0 ? (pct / 100) * feedDisplay : feedDisplay;
-        entrySpeedInput.value = String(displayUnit === "inch"
-          ? Math.round(feedAbs * 100) / 100
-          : Math.round(feedAbs));
-        entrySpeedInput.min = "1";
-        entrySpeedInput.removeAttribute("max");
-        entrySpeedInput.step = "any";
-        entrySpeedWrapper.setAttribute("data-step", displayUnit === "inch" ? "1" : "50");
-        entrySpeedWrapper.setAttribute("data-min", "1");
-        entrySpeedWrapper.removeAttribute("data-max");
-      } else {
-        const entryFeedMm = toMm(currentVal, displayUnit);
-        const pct = Number.isFinite(feedMm) && feedMm > 0 && Number.isFinite(entryFeedMm)
-          ? Math.round((entryFeedMm / feedMm) * 100)
-          : DEFAULT_ENTRY_SPEED_PCT;
-        entrySpeedInput.value = String(Math.min(200, Math.max(5, pct)));
-        entrySpeedInput.min = "5";
-        entrySpeedInput.max = "200";
-        entrySpeedInput.step = "any";
-        entrySpeedWrapper.setAttribute("data-step", "10");
-        entrySpeedWrapper.setAttribute("data-min", "5");
-        entrySpeedWrapper.setAttribute("data-max", "200");
-      }
+      if (!radio.checked || !entrySpeedInput || !entrySpeedWrapper || !feedrateInput) return;
+      const newUnit = radio.value === "feed" ? "feed" : "percent";
+      if (newUnit === entrySpeedUnitMemory) return;
+      convertEntrySpeedBetweenUnits(entrySpeedUnitMemory, newUnit);
+      entrySpeedUnitMemory = newUnit;
+      syncEntrySpeedInputConstraints(newUnit);
       updateEntrySpeedHint();
       if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
     });
@@ -9442,6 +9477,10 @@ function setupUI() {
   document.addEventListener("languagechange", updateEntrySpeedLabel);
   document.addEventListener("languagechange", updateEntrySpeedHint);
   document.addEventListener("unitchange", updateEntrySpeedHint);
+  entrySpeedUnitMemory = /** @type {HTMLInputElement} */ (
+    document.querySelector('input[name="entry-speed-unit"]:checked')
+  )?.value === "feed" ? "feed" : "percent";
+  syncEntrySpeedInputConstraints(entrySpeedUnitMemory);
   updateEntrySpeedLabel();
   updateEntrySpeedHint();
 
