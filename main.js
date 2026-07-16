@@ -9288,6 +9288,7 @@ function setupUI() {
       const clamped = Math.min(max, Math.max(min, next));
       input.value = String(clamped);
       if (input.id === "tool-diameter" || input.id === "stepover") updateStepoverHint();
+      if (input.id === "entry-speed") updateEntrySpeedHint();
       if (input.id === "patterned-holes-spacing-x" || input.id === "patterned-holes-spacing-y" || input.id === "patterned-holes-count-x" || input.id === "patterned-holes-count-y") {
         if (typeof updatePatternedHolesTotalHint === "function") updatePatternedHolesTotalHint();
       }
