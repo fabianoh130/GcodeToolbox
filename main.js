@@ -221,6 +221,7 @@ const EntryMethod = {
 
 const DEFAULT_SAFE_Z = 10; // mm, standaard veilige hoogte (overschrijfbaar via formulier)
 const DEFAULT_ENTRY_SPEED_PCT = 33; // standaard plunge/ramp als % van feedrate
+const DEFAULT_PLUNGE_PECK_DEPTH_MM = 1;
 
 /** @type {"percent"|"feed"} */
 let entrySpeedUnitMemory = "percent";
@@ -1316,6 +1317,11 @@ function readInputsFromForm() {
     entrySpeedValue = Number.isFinite(entrySpeedRaw) ? toMm(entrySpeedRaw, displayUnit) : NaN;
   }
 
+  const plungePeckingEnabled = isSimpleMode
+    ? false
+    : (/** @type {HTMLInputElement} */ (g("plunge-pecking-enabled"))?.checked ?? false);
+  const plungePeckDepthRaw = toMm(toNumber(g("plunge-peck-depth")?.value), displayUnit);
+
   const cutParams = {
     toolDiameter,
     totalDepth,
@@ -1337,6 +1343,10 @@ function readInputsFromForm() {
     finishingPassOverlap: Number.isFinite(finishingPassOverlap) && finishingPassOverlap >= 0 ? finishingPassOverlap : 0,
     entrySpeedUnit,
     entrySpeedValue,
+    plungePeckingEnabled,
+    plungePeckDepthMm: Number.isFinite(plungePeckDepthRaw) && plungePeckDepthRaw > 0
+      ? plungePeckDepthRaw
+      : DEFAULT_PLUNGE_PECK_DEPTH_MM,
   };
   cutParams.entryFeedrateMm = computeEntryFeedrateMm(cutParams);
 
@@ -1495,6 +1505,9 @@ function getParamsSnapshotReadOnly() {
     entrySpeedValue = Number.isFinite(entrySpeedRaw) ? vm("entry-speed") : NaN;
   }
 
+  const plungePeckingEnabled = isSimple ? false : (el("plunge-pecking-enabled")?.checked ?? false);
+  const plungePeckDepthRaw = vm("plunge-peck-depth");
+
   const cp = {
     toolDiameter: toolD,
     totalDepth: totalD,
@@ -1516,6 +1529,10 @@ function getParamsSnapshotReadOnly() {
     finishingPassOverlap: Number.isFinite(finPassOverlap) && finPassOverlap >= 0 ? finPassOverlap : 0,
     entrySpeedUnit,
     entrySpeedValue,
+    plungePeckingEnabled,
+    plungePeckDepthMm: Number.isFinite(plungePeckDepthRaw) && plungePeckDepthRaw > 0
+      ? plungePeckDepthRaw
+      : DEFAULT_PLUNGE_PECK_DEPTH_MM,
   };
   cp.entryFeedrateMm = computeEntryFeedrateMm(cp);
   const ss = v("spindle-speed");
@@ -1647,6 +1664,11 @@ function validateInputs(raw) {
       }
     } else if (!Number.isFinite(raw.cutParams.entrySpeedValue) || raw.cutParams.entrySpeedValue <= 0) {
       errors.push(t("error.entrySpeedFeedRequired"));
+    }
+    if (raw.cutParams.plungePeckingEnabled) {
+      if (!Number.isFinite(cp.plungePeckDepthMm) || cp.plungePeckDepthMm <= 0) {
+        errors.push(t("error.plungePeckDepthRequired"));
+      }
     }
   }
 
@@ -4975,6 +4997,32 @@ function addLayerForPath(
     moves.push({ x, y, z, type: "cut" });
   }
 
+  const plungePeckingActive = !!cutParams.plungePeckingEnabled && entryMethod === EntryMethod.PLUNGE;
+  const plungePeckDepthMm = Number.isFinite(cutParams.plungePeckDepthMm) && cutParams.plungePeckDepthMm > 0
+    ? cutParams.plungePeckDepthMm
+    : DEFAULT_PLUNGE_PECK_DEPTH_MM;
+
+  /** @param {number} x @param {number} y @param {number} zFrom @param {number} zTo */
+  function pushVerticalPlunge(x, y, zFrom, zTo) {
+    if (Math.abs(zFrom - zTo) < 1e-6) return;
+    if (!plungePeckingActive) {
+      pushEntryCut(x, y, zTo);
+      return;
+    }
+    let currentZ = zFrom;
+    const goingDeeper = zTo < currentZ - 1e-6;
+    while (true) {
+      const remaining = goingDeeper ? currentZ - zTo : zTo - currentZ;
+      const step = Math.min(plungePeckDepthMm, remaining);
+      const nextZ = goingDeeper ? currentZ - step : currentZ + step;
+      pushEntryCut(x, y, nextZ);
+      currentZ = nextZ;
+      if (Math.abs(currentZ - zTo) < 1e-6) break;
+      moves.push({ x, y, z: safeZ, type: "rapid" });
+      moves.push({ x, y, z: currentZ, type: "rapid" });
+    }
+  }
+
   const start = { x: path[0].x, y: path[0].y };
   const leadInAbove = Math.max(0, cutParams.leadInAboveMm ?? 2);
 
@@ -4989,7 +5037,7 @@ function addLayerForPath(
       moves.push({ x: start.x, y: start.y, z: leadInAbove, type: "rapid" });
     }
     pushEntryCut(start.x, start.y, 0);
-    pushEntryCut(start.x, start.y, depthZ);
+    pushVerticalPlunge(start.x, start.y, 0, depthZ);
     return;
   }
 
@@ -5170,7 +5218,8 @@ function addLayerForPath(
       if (safeZ > leadInAbove) {
         moves.push({ x: start.x, y: start.y, z: leadInAbove, type: "rapid" });
       }
-      pushEntryCut(start.x, start.y, depthZ);
+      const plungeStartZ = safeZ > leadInAbove ? leadInAbove : safeZ;
+      pushVerticalPlunge(start.x, start.y, plungeStartZ, depthZ);
     }
 
     // Volledige ring op deze diepte aflopen (met tabs indien tabConfig) – alleen bij plunge (bij ramp al gedaan)
@@ -5751,14 +5800,14 @@ function addLayerForPath(
         moves.push({ x: entryStart.x, y: entryStart.y, z: leadInAbove, type: "rapid" });
       }
       pushEntryCut(entryStart.x, entryStart.y, 0);
-      pushEntryCut(entryStart.x, entryStart.y, depthZ);
+      pushVerticalPlunge(entryStart.x, entryStart.y, 0, depthZ);
       if (plungeOutside) {
         addCurvedLeadIn(entryStart, start, path[1], depthZ);
       }
     } else {
       // Volgende laag: geen retract; op diepte (last.z) naar entryStart, dan plunge naar depthZ
       pushEntryCut(entryStart.x, entryStart.y, last.z);
-      pushEntryCut(entryStart.x, entryStart.y, depthZ);
+      pushVerticalPlunge(entryStart.x, entryStart.y, last.z, depthZ);
       if (plungeOutside) {
         addCurvedLeadIn(entryStart, start, path[1], depthZ);
       }
@@ -7356,7 +7405,7 @@ const CHAIN_CAPTURE_FIELD_IDS = [
   "finishing-pass-enabled", "finishing-pass-distance", "finishing-pass-speed-override", "finishing-pass-overlap",
   "feedrate", "spindle-speed", "safe-height", "lead-in-above",
   "xy-origin", "z-origin", "z-offset", "origin-offset-x", "origin-offset-y",
-  "entry-method", "ramp-angle", "entry-speed", "plunge-outside",
+  "entry-method", "ramp-angle", "entry-speed", "plunge-pecking-enabled", "plunge-peck-depth", "plunge-outside",
   "spindle-speed-enabled", "mist-coolant-enabled", "flood-coolant-enabled",
   "mirror-x-enabled", "mirror-y-enabled", "use-arcs-enabled",
 ];
@@ -9239,6 +9288,7 @@ function setupUI() {
       updateContourTypeVisibility();
       if (typeof updateEntrySpeedLabel === "function") updateEntrySpeedLabel();
       if (typeof updateEntrySpeedHint === "function") updateEntrySpeedHint();
+      if (typeof updatePlungePeckingVisibility === "function") updatePlungePeckingVisibility();
       if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
     });
   });
@@ -9251,6 +9301,26 @@ function setupUI() {
   updateEntryMethodForEngraving();
   updateRampInputsDisabled();
   updateContourTabsRampHintVisibility();
+
+  const plungePeckingCheckbox = /** @type {HTMLInputElement} */ (document.getElementById("plunge-pecking-enabled"));
+  const plungePeckDepthRow = document.getElementById("plunge-peck-depth-row");
+  function updatePlungePeckingVisibility() {
+    const isPlunge = entryMethodInput?.value === EntryMethod.PLUNGE;
+    document.querySelectorAll(".plunge-pecking-only").forEach((el) => {
+      el.classList.toggle("hidden", !isPlunge);
+    });
+    if (plungePeckingCheckbox) plungePeckingCheckbox.disabled = !isPlunge;
+    if (!isPlunge && plungePeckingCheckbox) plungePeckingCheckbox.checked = false;
+    if (plungePeckDepthRow && plungePeckingCheckbox) {
+      plungePeckDepthRow.classList.toggle("hidden", !isPlunge || !plungePeckingCheckbox.checked);
+    }
+  }
+  if (plungePeckingCheckbox) {
+    plungePeckingCheckbox.tabIndex = -1;
+    plungePeckingCheckbox.addEventListener("change", updatePlungePeckingVisibility);
+    plungePeckingCheckbox.addEventListener("click", updatePlungePeckingVisibility);
+  }
+  updatePlungePeckingVisibility();
 
   // Toggle-knoppen voor "Insteken naast part"
   plungeOutsideButtons.forEach((btn) => {
@@ -9679,7 +9749,11 @@ function setupUI() {
     const dy = (Number.isFinite(next.y) ? next.y : 0) - (Number.isFinite(prev.y) ? prev.y : 0);
     const dz = (Number.isFinite(next.z) ? next.z : 0) - (Number.isFinite(prev.z) ? prev.z : 0);
     const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    const feedrate = next.type === "cut" ? (feedrateMmMin > 0 ? feedrateMmMin : 800) : DEFAULT_RAPID_FEEDRATE_MM_MIN;
+    const isCut = next.type === "cut" || next.type === "arc";
+    const moveFeed = Number.isFinite(next.feedrateMmMin) && next.feedrateMmMin > 0
+      ? next.feedrateMmMin
+      : feedrateMmMin;
+    const feedrate = isCut ? (moveFeed > 0 ? moveFeed : 800) : DEFAULT_RAPID_FEEDRATE_MM_MIN;
     const tijdMs = (d * 60000) / feedrate;
     return Math.max(1, tijdMs / speedMultiplier);
   }
