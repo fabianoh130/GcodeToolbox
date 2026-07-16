@@ -220,6 +220,7 @@ const EntryMethod = {
  */
 
 const DEFAULT_SAFE_Z = 10; // mm, standaard veilige hoogte (overschrijfbaar via formulier)
+const DEFAULT_ENTRY_SPEED_PCT = 33; // standaard plunge/ramp als % van feedrate
 const GCODE_TOOLBOX_URL = "https://fabianoh130.github.io/GcodeToolbox/";
 
 /** Conversie display-eenheid naar mm (intern). */
@@ -411,10 +412,10 @@ function computeEntryFeedOverridePct(cutParams) {
   const unit = cutParams.entrySpeedUnit === "feed" ? "feed" : "percent";
   const value = cutParams.entrySpeedValue;
   if (unit === "percent") {
-    const pct = Number.isFinite(value) ? value : 100;
+    const pct = Number.isFinite(value) ? value : DEFAULT_ENTRY_SPEED_PCT;
     return Math.max(5, Math.min(200, Math.round(pct)));
   }
-  const entryFeedMm = Number.isFinite(value) ? value : feedrate;
+  const entryFeedMm = Number.isFinite(value) ? value : feedrate * (DEFAULT_ENTRY_SPEED_PCT / 100);
   return Math.max(5, Math.min(200, Math.round((entryFeedMm / feedrate) * 100)));
 }
 
@@ -1236,10 +1237,10 @@ function readInputsFromForm() {
   const entrySpeedUnit = isSimpleMode
     ? "percent"
     : (/** @type {HTMLInputElement} */ (document.querySelector('input[name="entry-speed-unit"]:checked'))?.value ?? "percent");
-  const entrySpeedRaw = isSimpleMode ? 100 : toNumber(g("entry-speed")?.value);
+  const entrySpeedRaw = isSimpleMode ? DEFAULT_ENTRY_SPEED_PCT : toNumber(g("entry-speed")?.value);
   let entrySpeedValue;
   if (entrySpeedUnit === "percent") {
-    entrySpeedValue = Number.isFinite(entrySpeedRaw) ? entrySpeedRaw : 100;
+    entrySpeedValue = Number.isFinite(entrySpeedRaw) ? entrySpeedRaw : DEFAULT_ENTRY_SPEED_PCT;
   } else {
     entrySpeedValue = Number.isFinite(entrySpeedRaw) ? toMm(entrySpeedRaw, displayUnit) : NaN;
   }
@@ -1415,10 +1416,10 @@ function getParamsSnapshotReadOnly() {
   const finPassOverlap = finPassEnabled ? (vm("finishing-pass-overlap") || 0) : 0;
 
   const entrySpeedUnit = isSimple ? "percent" : (document.querySelector('input[name="entry-speed-unit"]:checked')?.value ?? "percent");
-  const entrySpeedRaw = isSimple ? 100 : v("entry-speed");
+  const entrySpeedRaw = isSimple ? DEFAULT_ENTRY_SPEED_PCT : v("entry-speed");
   let entrySpeedValue;
   if (entrySpeedUnit === "percent") {
-    entrySpeedValue = Number.isFinite(entrySpeedRaw) ? entrySpeedRaw : 100;
+    entrySpeedValue = Number.isFinite(entrySpeedRaw) ? entrySpeedRaw : DEFAULT_ENTRY_SPEED_PCT;
   } else {
     entrySpeedValue = Number.isFinite(entrySpeedRaw) ? vm("entry-speed") : NaN;
   }
@@ -7557,6 +7558,8 @@ function loadChainStepToForm(stepId) {
   if (typeof updateUIForOperationTypeAndShape === "function") updateUIForOperationTypeAndShape();
   if (typeof updateContourTypeVisibility === "function") updateContourTypeVisibility();
   if (typeof updateStepoverHint === "function") updateStepoverHint();
+  if (typeof updateEntrySpeedLabel === "function") updateEntrySpeedLabel();
+  if (typeof updateEntrySpeedHint === "function") updateEntrySpeedHint();
   if (typeof updateToolDiameterVisibility === "function") updateToolDiameterVisibility();
   updateChainFieldLocks();
   renderChainStepsBar();
@@ -9407,7 +9410,7 @@ function setupUI() {
       const feedMm = toMm(feedDisplay, displayUnit);
       const currentVal = toNumber(entrySpeedInput.value);
       if (radio.value === "feed") {
-        const pct = Number.isFinite(currentVal) ? currentVal : 100;
+        const pct = Number.isFinite(currentVal) ? currentVal : DEFAULT_ENTRY_SPEED_PCT;
         const feedAbs = Number.isFinite(feedMm) && feedMm > 0 ? (pct / 100) * feedDisplay : feedDisplay;
         entrySpeedInput.value = String(displayUnit === "inch"
           ? Math.round(feedAbs * 100) / 100
@@ -9422,7 +9425,7 @@ function setupUI() {
         const entryFeedMm = toMm(currentVal, displayUnit);
         const pct = Number.isFinite(feedMm) && feedMm > 0 && Number.isFinite(entryFeedMm)
           ? Math.round((entryFeedMm / feedMm) * 100)
-          : 100;
+          : DEFAULT_ENTRY_SPEED_PCT;
         entrySpeedInput.value = String(Math.min(200, Math.max(5, pct)));
         entrySpeedInput.min = "5";
         entrySpeedInput.max = "200";
