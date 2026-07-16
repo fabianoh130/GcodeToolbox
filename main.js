@@ -381,6 +381,7 @@ function applyTranslations() {
   });
   const titleEl = document.querySelector("title[data-i18n]");
   if (titleEl) titleEl.textContent = t(titleEl.getAttribute("data-i18n"));
+  if (typeof updateDxfSupportOpenButton === "function") updateDxfSupportOpenButton();
 }
 
 /**
@@ -7628,13 +7629,15 @@ function readDxfSupportHolesFromForm() {
   };
 }
 
-function updateDxfSupportPointsSummary() {
-  const summary = document.getElementById("dxf-support-points-summary");
-  if (!summary) return;
+function updateDxfSupportOpenButton() {
+  const openBtn = document.getElementById("dxf-support-open-btn");
+  if (!openBtn) return;
   const count = currentDxfSupportPoints.length;
-  summary.textContent = count > 0
-    ? t("form.dxfSupportPointsCount", { count: String(count) })
-    : t("form.dxfSupportPointsNone");
+  openBtn.textContent = count > 0 ? t("form.dxfSupportEditCanvas") : t("form.dxfSupportOpenCanvas");
+}
+
+function updateDxfSupportPointsSummary() {
+  updateDxfSupportOpenButton();
 }
 
 function updateDxfSupportPopupCount() {
@@ -10247,6 +10250,14 @@ function setupUI() {
   /** @type {number[]} cumulatieve segmentduur in ms (index i = eindtijd van segment i→i+1), gebouwd bij start playback */
   let playbackCumulativeTimesMs = [];
   let playbackTotalDurationMs = 0;
+  const DXF_SUPPORT_PLAYBACK_PAUSE_MS = 5000;
+  let playbackDxfPauseResumeAt = null;
+  let playbackDxfPausePassed = false;
+
+  function resetDxfPlaybackPauseState() {
+    playbackDxfPauseResumeAt = null;
+    playbackDxfPausePassed = false;
+  }
 
   /**
    * Berekent de preview-duur in ms voor het segment van move index naar index+1.
@@ -10444,32 +10455,53 @@ function setupUI() {
 
   function playbackTick() {
     if (!isPlaying || !lastToolpath.moves.length) return;
+
+    const pauseIndex = Number.isFinite(lastToolpath.dxfSupportPauseIndex) ? lastToolpath.dxfSupportPauseIndex : -1;
+    const pauseTimeMs = pauseIndex >= 0 ? playbackCumulativeTimesMs[pauseIndex] : null;
+
+    if (playbackDxfPauseResumeAt !== null) {
+      playbackElapsedMs = pauseTimeMs ?? playbackElapsedMs;
+      syncGcodeCursorToPlayback();
+      if (previewCanvas) renderPreview(lastToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
+      if (Date.now() < playbackDxfPauseResumeAt) return;
+      playbackDxfPauseResumeAt = null;
+      playbackDxfPausePassed = true;
+      playbackElapsedMs = (pauseTimeMs ?? 0) + 1;
+      playbackStartTime = Date.now() - playbackElapsedMs / playbackSpeedMultiplier;
+    }
+
     const elapsedMs = (Date.now() - playbackStartTime) * playbackSpeedMultiplier;
     if (
-      Number.isFinite(lastToolpath.dxfSupportPauseIndex) &&
-      lastToolpath.dxfSupportPauseIndex >= 0 &&
-      playbackCumulativeTimesMs.length > lastToolpath.dxfSupportPauseIndex &&
-      elapsedMs >= playbackCumulativeTimesMs[lastToolpath.dxfSupportPauseIndex] - 1
+      !playbackDxfPausePassed &&
+      pauseIndex >= 0 &&
+      pauseTimeMs !== null &&
+      playbackCumulativeTimesMs.length > pauseIndex &&
+      elapsedMs >= pauseTimeMs - 1
     ) {
-      playbackElapsedMs = playbackCumulativeTimesMs[lastToolpath.dxfSupportPauseIndex];
-      stopPlayback();
+      playbackElapsedMs = pauseTimeMs;
+      playbackDxfPauseResumeAt = Date.now() + DXF_SUPPORT_PLAYBACK_PAUSE_MS;
       syncGcodeCursorToPlayback();
       if (previewCanvas) renderPreview(lastToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
       updatePlaybackButtonsState();
       return;
     }
+
     if (elapsedMs >= playbackTotalDurationMs) {
       playbackElapsedMs = playbackTotalDurationMs;
+      resetDxfPlaybackPauseState();
       stopPlayback();
       updatePlaybackButtonsState();
       return;
     }
+
+    playbackElapsedMs = elapsedMs;
     syncGcodeCursorToPlayback();
     if (previewCanvas) renderPreview(lastToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
   }
 
   function stopPlayback() {
     isPlaying = false;
+    playbackDxfPauseResumeAt = null;
     if (playbackIntervalId !== null) {
       clearInterval(playbackIntervalId);
       playbackIntervalId = null;
@@ -10530,6 +10562,11 @@ function setupUI() {
         playbackCumulativeTimesMs = cumulative;
         playbackTotalDurationMs = total;
         if (playbackTotalDurationMs <= 0) return;
+        const pauseIndex = Number.isFinite(lastToolpath.dxfSupportPauseIndex) ? lastToolpath.dxfSupportPauseIndex : -1;
+        const pauseTimeMs = pauseIndex >= 0 ? playbackCumulativeTimesMs[pauseIndex] : null;
+        if (playbackDxfPausePassed || pauseTimeMs === null || playbackElapsedMs < pauseTimeMs - 1) {
+          playbackDxfPauseResumeAt = null;
+        }
         playbackStartTime = Date.now() - playbackElapsedMs / playbackSpeedMultiplier;
         isPlaying = true;
         playbackIntervalId = setInterval(playbackTick, PREVIEW_TICK_MS);
@@ -10543,6 +10580,7 @@ function setupUI() {
     resetBtn.addEventListener("click", () => {
       if (!lastToolpath.moves.length) return;
       playbackElapsedMs = 0;
+      resetDxfPlaybackPauseState();
       stopPlayback();
       syncGcodeCursorToPlayback(GCODE_HEADER_LINES);
       if (previewCanvas) renderPreview(lastToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
@@ -10689,6 +10727,7 @@ function setupUI() {
         lastToolpath = mergedToolpath;
 
         stopPlayback();
+        resetDxfPlaybackPauseState();
         playbackElapsedMs = 0;
         updatePlaybackButtonsState();
 
@@ -10766,6 +10805,7 @@ function setupUI() {
         if (copyBtn) copyBtn.disabled = true;
         lastToolpath = { moves: [] };
         stopPlayback();
+        resetDxfPlaybackPauseState();
         playbackElapsedMs = 0;
         updatePlaybackButtonsState();
         if (previewCanvas) renderPreview(lastToolpath, previewCanvas, currentPreviewView);
@@ -10788,6 +10828,7 @@ function setupUI() {
       const gcode = toolpathToGcode(toolpath, validation.params);
 
       stopPlayback();
+      resetDxfPlaybackPauseState();
       playbackElapsedMs = 0;
       updatePlaybackButtonsState();
 

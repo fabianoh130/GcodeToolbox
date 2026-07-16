@@ -1751,28 +1751,37 @@ body[data-display-mode="simple"] #gcode-form [data-mode="advanced"] {
   filter: brightness(1.05);
 }
 
-.dxf-support-popup-count,
-.dxf-support-points-summary {
+.dxf-support-popup-count {
   font-size: 0.85rem;
   color: var(--text-soft);
 }
 
-.dxf-support-place-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.dxf-support-place-row .dxf-file-btn {
-  flex: 0 0 auto;
-  margin-left: auto;
-}
-
-.dxf-support-points-summary {
-  flex: 1 1 auto;
+.field-row .dxf-support-action-btn {
+  flex: 1 1 120px;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid rgba(56, 189, 248, 0.8);
+  padding: 6px 12px;
+  min-height: 2rem;
+  text-align: center;
+  font-size: 0.8rem;
+  font-weight: 500;
+  font-family: inherit;
+  background: var(--accent-soft);
+  color: var(--accent);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+}
+
+.field-row .dxf-support-action-btn:hover {
+  border-color: var(--accent-strong);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
 }
 
 .dxf-support-actions {
@@ -1885,10 +1894,17 @@ body.theme-light .toggle-btn,
 body.theme-light .stepper-btn,
 body.theme-light .entry-method-btn,
 body.theme-light .preview-view-btn,
-body.theme-light .dxf-file-btn {
+body.theme-light .dxf-file-btn,
+body.theme-light .dxf-support-action-btn {
   background: #f9fafb;
   border-color: #d1d5db;
   color: var(--text-main);
+}
+
+body.theme-light .dxf-support-action-btn {
+  background: linear-gradient(135deg, var(--accent-soft), #ffffff);
+  border-color: rgba(14, 165, 233, 0.8);
+  color: var(--accent-strong);
 }
 
 body.theme-light .stepover-unit-toggle {
