@@ -532,6 +532,17 @@
                 </div>
               </div>
               <div class="field-row shape-field shape-vector hidden">
+                <label for="vector-scale" data-i18n="form.vectorScale">Schaal (%)</label>
+                <div class="input-with-stepper" data-step="1" data-min="0.1">
+                  <input type="number" id="vector-scale" min="0.1" step="any" value="100" />
+                  <div class="stepper-buttons">
+                    <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
+                    <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
+                  </div>
+                </div>
+                <p class="field-hint" data-i18n="form.vectorScaleHint">Percentage van de originele grootte (100 = ongewijzigd).</p>
+              </div>
+              <div class="field-row shape-field shape-vector hidden">
                 <label for="vector-orientation" data-i18n="form.vectorOrientation">Orientatie</label>
                 <select id="vector-orientation" name="vector-orientation">
                   <option value="0" data-i18n="form.vectorOrientation0">Normaal (0°)</option>

@@ -114,6 +114,13 @@ function getImportOrientationDeg(shapeParams) {
   return Number(sp.dxfOrientation ?? sp.svgOrientation) || 0;
 }
 
+/** @param {object} [shapeParams] @returns {number} schaal als decimaal (100% → 1) */
+function getImportScaleFactor(shapeParams) {
+  const pct = Number(shapeParams?.vectorScalePercent);
+  if (!Number.isFinite(pct) || pct <= 0) return 1;
+  return pct / 100;
+}
+
 /**
  * Vaste freesdiameter voor gravure-modi waar het pad niet wordt geoffset.
  * @param {string} shape
@@ -813,12 +820,15 @@ async function readVectorImportTextFromFileInput() {
  * @param {string} fileName
  * @param {string} fileText
  * @param {number} orientationDeg
+ * @param {number} scalePercent
  * @param {string} xyOrigin
  * @returns {{ x: number, y: number, z: number }[][]}
  */
-function buildImportContoursFromFile(fileName, fileText, orientationDeg, xyOrigin) {
+function buildImportContoursFromFile(fileName, fileText, orientationDeg, scalePercent, xyOrigin) {
   const contours = parseVectorImportToContours(fileName, fileText);
-  const oriented = orientationDeg !== 0 ? rotatePathsAroundOrigin(contours, orientationDeg) : contours;
+  const scaleFactor = Number.isFinite(scalePercent) && scalePercent > 0 ? scalePercent / 100 : 1;
+  const scaled = scalePathsAroundCenter(contours, scaleFactor);
+  const oriented = orientationDeg !== 0 ? rotatePathsAroundOrigin(scaled, orientationDeg) : scaled;
   return applyOriginToDxfContours(oriented, xyOrigin);
 }
 
@@ -988,6 +998,39 @@ function rotatePathsAroundOrigin(paths, angleDeg) {
     contour.map((p) => ({
       x: p.x * cos - p.y * sin,
       y: p.x * sin + p.y * cos,
+      z: p.z,
+    }))
+  );
+}
+
+/**
+ * Schaal contour-paden rond het middelpunt van de totale bounding box.
+ * @param {{ x: number, y: number, z: number }[][]} paths
+ * @param {number} scaleFactor - 1 = 100%, 2 = 200%, 0.5 = 50%
+ * @returns {{ x: number, y: number, z: number }[][]}
+ */
+function scalePathsAroundCenter(paths, scaleFactor) {
+  if (!paths || paths.length === 0 || !Number.isFinite(scaleFactor) || Math.abs(scaleFactor - 1) < 1e-9) {
+    return paths;
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const contour of paths) {
+    for (const p of contour) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  return paths.map((contour) =>
+    contour.map((p) => ({
+      x: cx + (p.x - cx) * scaleFactor,
+      y: cy + (p.y - cy) * scaleFactor,
       z: p.z,
     }))
   );
@@ -1224,6 +1267,7 @@ function readInputsFromForm() {
   } else if (isVectorImportShape(shape)) {
     shapeParams.type = "vector";
     shapeParams.vectorOrientation = toNumber(g("vector-orientation")?.value) || 0;
+    shapeParams.vectorScalePercent = toNumber(g("vector-scale")?.value) || 100;
   }
 
   const letterMode = shape === ShapeType.LETTERS
@@ -1432,7 +1476,11 @@ function getParamsSnapshotReadOnly() {
   else if (shape === ShapeType.THREAD_MILLING) { sp.majorDiameter = vm("thread-major-diameter"); sp.pitch = vm("thread-pitch"); sp.holeDiameter = vm("thread-hole-diameter"); sp.threadDepth = vm("thread-milling-depth"); sp.threadSystem = el("thread-system")?.value || "metric"; sp.threadPreset = el("thread-preset")?.value || ""; sp.threadMillType = el("thread-mill-type")?.value || ThreadMillType.INTERNAL; sp.threadCutDirection = el("thread-cut-direction")?.value || ThreadCutDirection.BOTTOM_TO_TOP; sp.threadHand = el("thread-hand")?.value || ThreadHand.RIGHT; }
   else if (shape === ShapeType.PATTERNED_HOLES) { sp.diameter = vm("patterned-holes-diameter"); sp.spacingX = vm("patterned-holes-spacing-x"); sp.spacingY = vm("patterned-holes-spacing-y"); sp.countX = Math.max(1, Math.floor(v("patterned-holes-count-x") || 1)); sp.countY = Math.max(1, Math.floor(v("patterned-holes-count-y") || 1)); }
   else if (shape === ShapeType.CIRCULAR_PATTERN_HOLES) { sp.count = Math.max(1, Math.floor(v("circular-pattern-holes-count") || 6)); sp.diameter = vm("circular-pattern-holes-diameter"); sp.circleDiameter = vm("circular-pattern-holes-circle-diameter"); sp.startAngle = Math.max(0, Math.min(360, v("circular-pattern-holes-start-angle") || 0)); sp.holeInCenter = el("circular-pattern-holes-center-hole")?.checked ?? false; sp.centerHoleDiameter = sp.holeInCenter ? vm("circular-pattern-holes-center-diameter") : 0; }
-  else if (isVectorImportShape(shape)) { sp.type = "vector"; sp.vectorOrientation = v("vector-orientation") || 0; }
+  else if (isVectorImportShape(shape)) {
+    sp.type = "vector";
+    sp.vectorOrientation = v("vector-orientation") || 0;
+    sp.vectorScalePercent = toNumber(v("vector-scale")) || 100;
+  }
 
   const letterMode = shape === ShapeType.LETTERS ? (el("letter-mode")?.value || "outline") : "outline";
   const contourType = normalizeContourType(el("contour-type")?.value);
@@ -1691,6 +1739,9 @@ function validateInputs(raw) {
     case ShapeType.VECTOR_IMPORT:
       if (!raw.dxfContours || !Array.isArray(raw.dxfContours) || raw.dxfContours.length === 0) {
         errors.push(t("error.vectorNoContours"));
+      }
+      if (!Number.isFinite(sp.vectorScalePercent) || sp.vectorScalePercent <= 0) {
+        errors.push(t("error.positive", { label: t("field.vectorScale") }));
       }
       break;
     default:
@@ -7368,6 +7419,7 @@ const CHAIN_CAPTURE_FIELD_IDS = [
   "circular-pattern-holes-count", "circular-pattern-holes-diameter", "circular-pattern-holes-circle-diameter",
   "circular-pattern-holes-start-angle", "circular-pattern-holes-center-hole", "circular-pattern-holes-center-diameter",
   "vector-orientation",
+  "vector-scale",
   "facing-mode", "facing-direction", "facing-finish-mode", "facing-even-spacing",
   "contour-type", "tabs-enabled", "tab-interval", "tab-width", "tab-height",
   "tool-diameter", "total-depth", "multiple-depths", "stepdown", "stepover",
@@ -7776,6 +7828,7 @@ async function prepareRawFromChainStep(step, baselineFields) {
       step.dxfFileName || "",
       step.dxfText,
       getImportOrientationDeg(raw.shapeParams),
+      Number(raw.shapeParams.vectorScalePercent) || 100,
       raw.originParams.xyOrigin
     );
   }
@@ -8632,6 +8685,8 @@ function setupUI() {
         const u = getDisplayUnit();
         const toolEl = /** @type {HTMLInputElement | null} */ (document.getElementById("tool-diameter"));
         if (toolEl) toolEl.value = String(fromMm(DXF_ENGRAVING_TOOL_DIAMETER_MM, u));
+        const scaleEl = /** @type {HTMLInputElement | null} */ (document.getElementById("vector-scale"));
+        if (scaleEl) scaleEl.value = "100";
       }
       updateContourTypeVisibility();
     } else if (selected === ShapeType.FACING) {
@@ -10102,6 +10157,7 @@ function setupUI() {
             file.name,
             text,
             getImportOrientationDeg(raw.shapeParams),
+            Number(raw.shapeParams.vectorScalePercent) || 100,
             raw.originParams.xyOrigin
           );
         } catch (importErr) {
