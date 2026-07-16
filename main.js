@@ -7630,6 +7630,10 @@ let dxfSupportSpacePanHeld = false;
 
 let dxfSupportPanMoved = false;
 
+const DXF_SUPPORT_ZOOM_MIN = 0.25;
+const DXF_SUPPORT_ZOOM_MAX = 12;
+const DXF_SUPPORT_ZOOM_STEP = 1.15;
+
 function getDxfSupportHoleDiameterMm() {
   const displayUnit = getDisplayUnit();
   const diaRaw = toNumber(document.getElementById("dxf-support-holes-diameter")?.value);
@@ -7759,7 +7763,35 @@ function buildDxfSupportPopupView(canvas, contours) {
   const w = Math.max(bounds.maxX - bounds.minX, 1e-3);
   const h = Math.max(bounds.maxY - bounds.minY, 1e-3);
   const scale = Math.min((canvas.width - 2 * padding) / w, (canvas.height - 2 * padding) / h);
-  return { canvas, bounds, scale, padding, panX: 0, panY: 0 };
+  return { canvas, bounds, scale, padding, panX: 0, panY: 0, zoom: 1 };
+}
+
+function dxfSupportEffectiveScale(view) {
+  return view.scale * (view.zoom || 1);
+}
+
+function dxfSupportApplyZoomAtScreen(view, newZoom, anchorSx, anchorSy) {
+  const oldZoom = view.zoom || 1;
+  const clamped = Math.max(DXF_SUPPORT_ZOOM_MIN, Math.min(DXF_SUPPORT_ZOOM_MAX, newZoom));
+  if (Math.abs(clamped - oldZoom) < 1e-6) return;
+  const ratio = clamped / oldZoom;
+  const panX = view.panX || 0;
+  const panY = view.panY || 0;
+  const pad = view.padding;
+  const h = view.canvas.height;
+  view.panX = anchorSx - pad - (anchorSx - pad - panX) * ratio;
+  view.panY = anchorSy - (h - pad) + (h - pad - anchorSy + panY) * ratio;
+  view.zoom = clamped;
+}
+
+function dxfSupportZoomByFactor(view, factor, anchorSx, anchorSy) {
+  dxfSupportApplyZoomAtScreen(view, (view.zoom || 1) * factor, anchorSx, anchorSy);
+}
+
+function dxfSupportResetPopupView(view) {
+  view.panX = 0;
+  view.panY = 0;
+  view.zoom = 1;
 }
 
 function dxfSupportEventToCanvas(evt, canvas) {
@@ -7781,16 +7813,18 @@ function updateDxfSupportCanvasCursor(canvas) {
 function dxfSupportWorldToScreen(x, y, view) {
   const panX = view.panX || 0;
   const panY = view.panY || 0;
-  const sx = view.padding + (x - view.bounds.minX) * view.scale + panX;
-  const sy = view.canvas.height - view.padding - (y - view.bounds.minY) * view.scale + panY;
+  const s = dxfSupportEffectiveScale(view);
+  const sx = view.padding + (x - view.bounds.minX) * s + panX;
+  const sy = view.canvas.height - view.padding - (y - view.bounds.minY) * s + panY;
   return { sx, sy };
 }
 
 function dxfSupportScreenToWorld(sx, sy, view) {
   const panX = view.panX || 0;
   const panY = view.panY || 0;
-  const x = view.bounds.minX + (sx - view.padding - panX) / view.scale;
-  const y = view.bounds.minY + (view.canvas.height - view.padding - sy + panY) / view.scale;
+  const s = dxfSupportEffectiveScale(view);
+  const x = view.bounds.minX + (sx - view.padding - panX) / s;
+  const y = view.bounds.minY + (view.canvas.height - view.padding - sy + panY) / s;
   return { x, y };
 }
 
@@ -7847,7 +7881,7 @@ function renderDxfSupportPlaceCanvas() {
 
   dxfSupportPopupPoints.forEach((pt, index) => {
     const { sx, sy } = dxfSupportWorldToScreen(pt.x, pt.y, view);
-    const rPx = holeRadiusMm > 0 ? holeRadiusMm * view.scale : 6;
+    const rPx = holeRadiusMm > 0 ? holeRadiusMm * dxfSupportEffectiveScale(view) : 6;
     ctx.beginPath();
     ctx.strokeStyle = "rgba(248, 113, 113, 0.55)";
     ctx.lineWidth = 1;
@@ -7998,6 +8032,8 @@ function initDxfSupportUI() {
   const clearBtn = document.getElementById("dxf-support-clear-btn");
   const clearPauseBtn = document.getElementById("dxf-support-clear-pause-btn");
   const resetViewBtn = document.getElementById("dxf-support-reset-view-btn");
+  const zoomInBtn = document.getElementById("dxf-support-zoom-in-btn");
+  const zoomOutBtn = document.getElementById("dxf-support-zoom-out-btn");
   const modeHolesBtn = document.getElementById("dxf-support-mode-holes");
   const modePauseBtn = document.getElementById("dxf-support-mode-pause");
   const doneBtn = document.getElementById("dxf-support-done-btn");
@@ -8057,10 +8093,29 @@ function initDxfSupportUI() {
   if (resetViewBtn) {
     resetViewBtn.addEventListener("click", () => {
       if (dxfSupportPopupView) {
-        dxfSupportPopupView.panX = 0;
-        dxfSupportPopupView.panY = 0;
+        dxfSupportResetPopupView(dxfSupportPopupView);
         renderDxfSupportCanvas();
       }
+    });
+  }
+  if (zoomInBtn) {
+    zoomInBtn.addEventListener("click", () => {
+      if (!dxfSupportPopupView) return;
+      const canvasEl = /** @type {HTMLCanvasElement|null} */ (document.getElementById("dxf-support-canvas"));
+      const anchorSx = canvasEl ? canvasEl.width / 2 : 0;
+      const anchorSy = canvasEl ? canvasEl.height / 2 : 0;
+      dxfSupportZoomByFactor(dxfSupportPopupView, DXF_SUPPORT_ZOOM_STEP, anchorSx, anchorSy);
+      renderDxfSupportCanvas();
+    });
+  }
+  if (zoomOutBtn) {
+    zoomOutBtn.addEventListener("click", () => {
+      if (!dxfSupportPopupView) return;
+      const canvasEl = /** @type {HTMLCanvasElement|null} */ (document.getElementById("dxf-support-canvas"));
+      const anchorSx = canvasEl ? canvasEl.width / 2 : 0;
+      const anchorSy = canvasEl ? canvasEl.height / 2 : 0;
+      dxfSupportZoomByFactor(dxfSupportPopupView, 1 / DXF_SUPPORT_ZOOM_STEP, anchorSx, anchorSy);
+      renderDxfSupportCanvas();
     });
   }
   if (doneBtn) doneBtn.addEventListener("click", () => closeDxfSupportPopup(true));
@@ -8102,6 +8157,14 @@ function initDxfSupportUI() {
     canvas.addEventListener("auxclick", (evt) => {
       if (evt.button === 1) evt.preventDefault();
     });
+    canvas.addEventListener("wheel", (evt) => {
+      if (!dxfSupportPopupView) return;
+      evt.preventDefault();
+      const { sx, sy } = dxfSupportEventToCanvas(evt, canvas);
+      const factor = evt.deltaY < 0 ? DXF_SUPPORT_ZOOM_STEP : 1 / DXF_SUPPORT_ZOOM_STEP;
+      dxfSupportZoomByFactor(dxfSupportPopupView, factor, sx, sy);
+      renderDxfSupportCanvas();
+    }, { passive: false });
     window.addEventListener("mousemove", (evt) => {
       if (!dxfSupportPanDrag || !canvas) return;
       const { sx, sy } = dxfSupportEventToCanvas(evt, canvas);

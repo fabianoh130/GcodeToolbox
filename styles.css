@@ -1775,6 +1775,14 @@ body[data-display-mode="simple"] #gcode-form [data-mode="advanced"] {
   color: var(--accent);
 }
 
+.dxf-support-zoom-btn {
+  min-width: 34px;
+  padding: 7px 10px;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
 .dxf-support-popup-count {
   font-size: 0.85rem;
   color: var(--text-soft);
