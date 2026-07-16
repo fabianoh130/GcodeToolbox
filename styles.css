@@ -753,6 +753,7 @@ legend {
 }
 
 .field-row input[type="number"],
+.field-row input.decimal-input,
 .field-row select,
 .field-row textarea {
   flex: 1 1 120px;
@@ -806,6 +807,7 @@ legend {
 }
 
 .field-row input[type="number"]:focus,
+.field-row input.decimal-input:focus,
 .field-row select:focus,
 .field-row textarea:focus {
   border-color: var(--accent-strong);
@@ -915,6 +917,7 @@ button.dxf-file-btn {
 }
 
 .toggle-btn-input:checked + .toggle-btn,
+.toggle-btn--active,
 .entry-method-btn--active {
   background: var(--accent-soft);
   border-color: rgba(56, 189, 248, 0.8);
@@ -1830,6 +1833,7 @@ body.theme-light fieldset {
   background: #f9fafb;
   border-color: #e5e7eb;
 }body.theme-light .field-row input[type="number"],
+body.theme-light .field-row input.decimal-input,
 body.theme-light .field-row select,
 body.theme-light .field-row textarea {
   background: #ffffff;
@@ -1838,6 +1842,7 @@ body.theme-light .field-row textarea {
 }
 
 body.theme-light .field-row input[type="number"]:focus,
+body.theme-light .field-row input.decimal-input:focus,
 body.theme-light .field-row select:focus,
 body.theme-light .field-row textarea:focus {
   border-color: var(--accent-strong);
@@ -1890,6 +1895,7 @@ body.theme-light .stepover-unit-toggle .toggle-option span {
 }
 
 body.theme-light .toggle-btn-input:checked + .toggle-btn,
+body.theme-light .toggle-btn--active,
 body.theme-light .entry-method-btn--active {
   background: var(--accent-soft);
   border-color: rgba(14, 165, 233, 0.8);
