@@ -917,11 +917,17 @@ button.dxf-file-btn {
 }
 
 .toggle-btn-input:checked + .toggle-btn,
+.field-row button.toggle-btn.toggle-btn--active,
 .toggle-btn--active,
 .entry-method-btn--active {
   background: var(--accent-soft);
   border-color: rgba(56, 189, 248, 0.8);
   color: var(--accent);
+}
+
+.field-row button.toggle-btn.toggle-btn--active:hover {
+  border-color: var(--accent-strong);
+  color: var(--accent-strong);
 }
 
 /* Preset-dropdown voor vierkant/rechthoek afmetingen */
@@ -1729,6 +1735,14 @@ body[data-display-mode="simple"] #gcode-form [data-mode="advanced"] {
   cursor: crosshair;
 }
 
+#dxf-support-canvas.dxf-support-canvas--pan-ready {
+  cursor: grab;
+}
+
+#dxf-support-canvas.dxf-support-canvas--panning {
+  cursor: grabbing;
+}
+
 .dxf-support-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -1895,6 +1909,7 @@ body.theme-light .stepover-unit-toggle .toggle-option span {
 }
 
 body.theme-light .toggle-btn-input:checked + .toggle-btn,
+body.theme-light .field-row button.toggle-btn.toggle-btn--active,
 body.theme-light .toggle-btn--active,
 body.theme-light .entry-method-btn--active {
   background: var(--accent-soft);
