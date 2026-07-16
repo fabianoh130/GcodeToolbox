@@ -391,9 +391,15 @@ function toNumber(input) {
   if (typeof input === "number") return Number.isFinite(input) ? input : NaN;
   // Sta zowel punt als komma als decimaalteken toe
   const v = String(input).trim().replace(",", ".");
-  if (v === "") return NaN;
+  if (v === "" || v === "." || v === "-") return NaN;
   const n = Number(v);
   return Number.isFinite(n) ? n : NaN;
+}
+
+/** @param {string} value */
+function isPartialDecimalInput(value) {
+  const v = String(value ?? "").trim();
+  return v === "" || v === "." || v === "," || v === "-" || v.endsWith(".") || v.endsWith(",");
 }
 
 function degToRad(deg) {
@@ -9130,7 +9136,9 @@ function setupUI() {
   }
   updateTabParamsVisibility();
   document.querySelectorAll(".input-with-stepper[data-step]").forEach((wrapper) => {
-    const input = /** @type {HTMLInputElement} */ (wrapper.querySelector("input[type='number']"));
+    const input = /** @type {HTMLInputElement} */ (
+      wrapper.querySelector("input[type='number'], input.decimal-input")
+    );
     const downBtn = /** @type {HTMLButtonElement | HTMLInputElement | null} */ (wrapper.querySelector(".stepper-down"));
     const upBtn = /** @type {HTMLButtonElement | HTMLInputElement | null} */ (wrapper.querySelector(".stepper-up"));
     if (!input || !downBtn || !upBtn) return;
@@ -9161,7 +9169,7 @@ function setupUI() {
         ? currentStr.split(".")[1].length
         : 0;
 
-      const minDecimals = input.step === "any" ? 1 : 0;
+      const minDecimals = (input.step === "any" || input.classList.contains("decimal-input")) ? 1 : 0;
       const decimals = Math.max(stepDecimals, typedDecimals, minDecimals);
       const factor = Math.pow(10, decimals);
 
@@ -9266,7 +9274,12 @@ function setupUI() {
     }
     updateFacingEvenSpacingHint();
   }
-  if (toolDiameterInput) toolDiameterInput.addEventListener("input", () => { updateStepoverHint(); if (stepoverWrapper && stepoverInput) updateStepoverMaxWhenMm(); });
+  if (toolDiameterInput) {
+    toolDiameterInput.addEventListener("input", updateStepoverHint);
+    toolDiameterInput.addEventListener("change", () => {
+      if (stepoverWrapper && stepoverInput) updateStepoverMaxWhenMm();
+    });
+  }
   if (stepoverInput) stepoverInput.addEventListener("input", updateStepoverHint);
   document.addEventListener("languagechange", updateStepoverHint);
   document.addEventListener("unitchange", updateStepoverHint);
@@ -9287,6 +9300,7 @@ function setupUI() {
   function updateStepoverMaxWhenMm() {
     const unit = /** @type {HTMLInputElement} */ (document.querySelector('input[name="stepover-unit"]:checked'))?.value;
     if (unit === "mm" && stepoverWrapper && stepoverInput && toolDiameterInput) {
+      if (isPartialDecimalInput(toolDiameterInput.value)) return;
       const d = toNumber(toolDiameterInput.value);
       if (Number.isFinite(d) && d > 0) {
         stepoverInput.max = String(d);
