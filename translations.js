@@ -259,6 +259,8 @@ const TRANSLATIONS = {
     // Actions
     "form.generate": "Generate gcode",
     "form.download": "Download .nc",
+    "form.downloadPrompt": "Enter file name:",
+    "form.downloadCanceled": "Download canceled.",
     "form.copy": "Copy to clipboard",
 
     // Preview
@@ -628,6 +630,8 @@ const TRANSLATIONS = {
 
     "form.generate": "Genereer gcode",
     "form.download": "Download .nc",
+    "form.downloadPrompt": "Voer bestandsnaam in:",
+    "form.downloadCanceled": "Download geannuleerd.",
     "form.copy": "Kopieer naar klembord",
 
     "preview.title": "Preview van toolpad",
@@ -985,6 +989,8 @@ const TRANSLATIONS = {
 
     "form.generate": "G-Code erzeugen",
     "form.download": "Download .nc",
+    "form.downloadPrompt": "Dateiname eingeben:",
+    "form.downloadCanceled": "Download abgebrochen.",
     "form.copy": "In Zwischenablage",
 
     "preview.title": "Fräsbahnen-Vorschau",
@@ -1341,6 +1347,8 @@ const TRANSLATIONS = {
 
     "form.generate": "Générer le G-code",
     "form.download": "Télécharger .nc",
+    "form.downloadPrompt": "Entrez le nom du fichier :",
+    "form.downloadCanceled": "Téléchargement annulé.",
     "form.copy": "Copier dans le presse-papiers",
 
     "preview.title": "Aperçu de la trajectoire",
@@ -1697,6 +1705,8 @@ const TRANSLATIONS = {
 
     "form.generate": "Generar G-code",
     "form.download": "Descargar .nc",
+    "form.downloadPrompt": "Introduce el nombre del archivo:",
+    "form.downloadCanceled": "Descarga cancelada.",
     "form.copy": "Copiar al portapapeles",
 
     "preview.title": "Vista previa de trayectoria",
