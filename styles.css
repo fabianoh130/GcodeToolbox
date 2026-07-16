@@ -753,6 +753,7 @@ legend {
 }
 
 .field-row input[type="number"],
+.field-row input.decimal-input,
 .field-row select,
 .field-row textarea {
   flex: 1 1 120px;
@@ -806,6 +807,7 @@ legend {
 }
 
 .field-row input[type="number"]:focus,
+.field-row input.decimal-input:focus,
 .field-row select:focus,
 .field-row textarea:focus {
   border-color: var(--accent-strong);
@@ -837,7 +839,8 @@ legend {
 }
 
 /* Zelfde stijl als stepper-btn, entry-method-btn, toggle-btn */
-.field-row .dxf-file-btn {
+.field-row .dxf-file-btn,
+button.dxf-file-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -847,8 +850,11 @@ legend {
   background: rgba(15, 23, 42, 0.95);
   color: var(--text-main);
   font-size: 0.86rem;
+  font-family: inherit;
   cursor: pointer;
   transition: border-color var(--transition-fast), background var(--transition-fast);
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .dxf-file-btn:hover {
@@ -876,8 +882,9 @@ legend {
   pointer-events: none;
 }
 
-.toggle-btn {
-  display: inline-block;
+.toggle-btn,
+.entry-method-btn,
+.field-row button.toggle-btn {
   border-radius: 6px;
   border: 1px solid rgba(55, 65, 81, 0.9);
   padding: 6px 12px;
@@ -890,15 +897,37 @@ legend {
   transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
 }
 
-.toggle-btn:hover {
+.field-row button.toggle-btn {
+  flex: 1 1 120px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-family: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.toggle-btn:hover,
+.entry-method-btn:hover,
+.field-row button.toggle-btn:hover {
   border-color: var(--accent-strong);
   background: var(--accent-soft);
 }
 
-.toggle-btn-input:checked + .toggle-btn {
+.toggle-btn-input:checked + .toggle-btn,
+.field-row button.toggle-btn.toggle-btn--active,
+.toggle-btn--active,
+.entry-method-btn--active {
   background: var(--accent-soft);
   border-color: rgba(56, 189, 248, 0.8);
   color: var(--accent);
+}
+
+.field-row button.toggle-btn.toggle-btn--active:hover {
+  border-color: var(--accent-strong);
+  color: var(--accent-strong);
 }
 
 /* Preset-dropdown voor vierkant/rechthoek afmetingen */
@@ -1030,43 +1059,28 @@ legend {
   background: var(--accent-soft);
 }
 
-/* Insteekmethode-knoppen in stijl van +/- en netjes onder de invulvelden */
+/* Insteekmethode-knoppen in stijl van toggle-knoppen */
 .entry-method-buttons,
 .plunge-outside-buttons {
   display: flex;
   flex-direction: row;
   gap: 6px;
-  min-width: 14rem;
-  flex: 1 1 14rem;
+  flex: 1 1 120px;
+  min-width: 0;
   box-sizing: border-box;
 }
 
-.entry-method-btn {
+.field-row .entry-method-buttons .entry-method-btn,
+.field-row .plunge-outside-buttons .entry-method-btn {
   flex: 1 1 0;
-  padding: 4px 8px;
-  border-radius: 6px;
-  border: 1px solid rgba(55, 65, 81, 0.9);
-  background: rgba(15, 23, 42, 0.95);
-  color: var(--text-main);
-  font-size: 0.8rem;
-  line-height: 1.2;
-  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: border-color var(--transition-fast), background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
-}
-
-.entry-method-btn:hover {
-  border-color: var(--accent-strong);
-  background: var(--accent-soft);
-}
-
-.entry-method-btn--active {
-  background: linear-gradient(135deg, var(--accent-soft), rgba(15, 23, 42, 0.95));
-  border-color: rgba(56, 189, 248, 0.8);
-  color: var(--accent);
-  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.25);
+  line-height: 1.2;
+  cursor: pointer;
+  font-family: inherit;
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .entry-method-btn:disabled {
@@ -1694,6 +1708,106 @@ body[data-display-mode="simple"] #gcode-form [data-mode="advanced"] {
   transform: translateY(1px);
 }
 
+.dxf-support-modal {
+  max-width: min(96vw, 980px);
+  width: calc(100% - 32px);
+  max-height: calc(100vh - 32px);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-soft);
+  border: 1px solid var(--border-subtle);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dxf-support-header h2 {
+  margin: 0 0 6px;
+  font-size: 1.1rem;
+}
+
+.dxf-support-intro {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--text-soft);
+}
+
+.dxf-support-canvas-wrap {
+  flex: 1 1 auto;
+  min-height: 280px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: #0f172a;
+  overflow: hidden;
+}
+
+#dxf-support-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  cursor: crosshair;
+}
+
+#dxf-support-canvas.dxf-support-canvas--pan-ready {
+  cursor: grab;
+}
+
+#dxf-support-canvas.dxf-support-canvas--panning {
+  cursor: grabbing;
+}
+
+.dxf-support-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.dxf-support-toolbar-btn,
+.dxf-support-secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.dxf-support-toolbar-btn:hover,
+.dxf-support-secondary-btn:hover {
+  filter: brightness(1.05);
+}
+
+.dxf-support-mode-btn--active {
+  background: var(--accent-soft);
+  border-color: rgba(56, 189, 248, 0.8);
+  color: var(--accent);
+}
+
+.dxf-support-zoom-btn {
+  min-width: 34px;
+  padding: 7px 10px;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.dxf-support-popup-count {
+  font-size: 0.85rem;
+  color: var(--text-soft);
+}
+
+.dxf-support-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 @media (max-width: 960px) {
   .app-main {
     grid-template-columns: minmax(0, 1fr);
@@ -1755,6 +1869,7 @@ body.theme-light fieldset {
   background: #f9fafb;
   border-color: #e5e7eb;
 }body.theme-light .field-row input[type="number"],
+body.theme-light .field-row input.decimal-input,
 body.theme-light .field-row select,
 body.theme-light .field-row textarea {
   background: #ffffff;
@@ -1763,6 +1878,7 @@ body.theme-light .field-row textarea {
 }
 
 body.theme-light .field-row input[type="number"]:focus,
+body.theme-light .field-row input.decimal-input:focus,
 body.theme-light .field-row select:focus,
 body.theme-light .field-row textarea:focus {
   border-color: var(--accent-strong);
@@ -1798,7 +1914,8 @@ body.theme-light .toggle-btn,
 body.theme-light .stepper-btn,
 body.theme-light .entry-method-btn,
 body.theme-light .preview-view-btn,
-body.theme-light .dxf-file-btn {
+body.theme-light .dxf-file-btn,
+body.theme-light .field-row button.toggle-btn {
   background: #f9fafb;
   border-color: #d1d5db;
   color: var(--text-main);
@@ -1813,10 +1930,19 @@ body.theme-light .stepover-unit-toggle .toggle-option span {
   color: var(--text-soft);
 }
 
-body.theme-light .preview-view-btn--active,
+body.theme-light .toggle-btn-input:checked + .toggle-btn,
+body.theme-light .field-row button.toggle-btn.toggle-btn--active,
+body.theme-light .toggle-btn--active,
 body.theme-light .entry-method-btn--active {
+  background: var(--accent-soft);
+  border-color: rgba(14, 165, 233, 0.8);
+  color: var(--accent-strong);
+}
+
+body.theme-light .preview-view-btn--active {
   background: linear-gradient(135deg, var(--accent-soft), #ffffff);
   border-color: rgba(14, 165, 233, 0.8);
+  color: var(--accent-strong);
 }
 
 body.theme-light .gcode-output-wrapper {

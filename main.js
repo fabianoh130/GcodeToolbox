@@ -252,8 +252,8 @@ const EntryMethod = {
 };
 
 /**
- * @typedef {{ x: number, y: number, z: number, type: 'rapid'|'cut'|'arc', feedrateMmMin?: number, i?: number, j?: number, clockwise?: boolean }} ToolpathMove
- * @typedef {{ moves: ToolpathMove[], resultPaths?: {x:number,y:number,z:number}[][], resultTotalDepth?: number, resultBottomZ?: number, resultContourInside?: boolean, resultPathsWithDepth?: {path:{x:number,y:number,z:number}[], topZ:number, bottomZ:number}[], resultBounds?: {minX:number,maxX:number,minY:number,maxY:number}, toolDiameter?: number }} Toolpath
+ * @typedef {{ x: number, y: number, z: number, type: 'rapid'|'cut'|'pause'|'arc', feedrateMmMin?: number, i?: number, j?: number, clockwise?: boolean }} ToolpathMove
+ * @typedef {{ moves: ToolpathMove[], resultPaths?: {x:number,y:number,z:number}[][], resultTotalDepth?: number, resultBottomZ?: number, resultContourInside?: boolean, resultPathsWithDepth?: {path:{x:number,y:number,z:number}[], topZ:number, bottomZ:number}[], resultBounds?: {minX:number,maxX:number,minY:number,maxY:number}, toolDiameter?: number, dxfSupportMoveStart?: number, dxfSupportPauseIndex?: number, dxfSupportHolePoints?: {x:number,y:number}[], dxfSupportHoleDiameter?: number, dxfSupportPausePoint?: {x:number,y:number}|null }} Toolpath
  */
 
 const DEFAULT_SAFE_Z = 10; // mm, standaard veilige hoogte (overschrijfbaar via formulier)
@@ -479,6 +479,7 @@ function applyTranslations() {
   });
   const titleEl = document.querySelector("title[data-i18n]");
   if (titleEl) titleEl.textContent = t(titleEl.getAttribute("data-i18n"));
+  if (typeof updateDxfSupportOpenButton === "function") updateDxfSupportOpenButton();
 }
 
 /**
@@ -925,6 +926,37 @@ function buildImportContoursFromFile(fileName, fileText, orientationDeg, scalePe
 }
 
 /**
+ * @param {*} raw
+ * @param {string} fileName
+ * @param {string} fileText
+ */
+function applyImportFileToRaw(raw, fileName, fileText) {
+  const contours = parseVectorImportToContours(fileName, fileText);
+  if (!contours.length) {
+    raw.dxfContours = [];
+    return;
+  }
+  const scaled = scalePathsAroundCenter(contours, getImportScaleFactor(raw.shapeParams));
+  const orientationDeg = getImportOrientationDeg(raw.shapeParams);
+  const oriented = orientationDeg !== 0 ? rotatePathsAroundOrigin(scaled, orientationDeg) : scaled;
+  applyDxfOriginToRaw(raw, oriented);
+}
+
+/**
+ * @param {string} fileName
+ * @param {string} fileText
+ * @param {object} [shapeParams]
+ * @returns {{ x: number, y: number, z: number }[][]}
+ */
+function buildOrientedImportContoursForSupport(fileName, fileText, shapeParams) {
+  const contours = parseVectorImportToContours(fileName, fileText);
+  if (!contours.length) return [];
+  const scaled = scalePathsAroundCenter(contours, getImportScaleFactor(shapeParams));
+  const orientationDeg = getImportOrientationDeg(shapeParams);
+  return orientationDeg !== 0 ? rotatePathsAroundOrigin(scaled, orientationDeg) : scaled;
+}
+
+/**
  * Verbind LINE-segmenten tot gesloten lussen (endpoint-matching met tolerantie).
  * @param {{ x: number, y: number, z: number }[][]} segments - elk element is [start, end]
  * @returns {{ x: number, y: number, z: number }[][]}
@@ -999,6 +1031,82 @@ function applyOriginToDxfContours(contours, xyOrigin) {
   return contours.map((contour) =>
     contour.map((p) => ({ x: p.x + dx, y: p.y + dy, z: 0 }))
   );
+}
+
+/**
+ * Bepaal de XY-verschuiving voor DXF-contouren (zelfde logica als applyOriginToDxfContours).
+ * @param {{ x: number, y: number, z?: number }[][]} contours
+ * @param {string} xyOrigin
+ * @returns {{ dx: number, dy: number }}
+ */
+function getDxfOriginShift(contours, xyOrigin) {
+  if (!contours || contours.length === 0) return { dx: 0, dy: 0 };
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const contour of contours) {
+    for (const p of contour) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  let dx;
+  let dy;
+  switch (xyOrigin) {
+    case XYOrigin.CENTER: dx = -cx; dy = -cy; break;
+    case XYOrigin.BOTTOM_LEFT: dx = -minX; dy = -minY; break;
+    case XYOrigin.BOTTOM_RIGHT: dx = -maxX; dy = -minY; break;
+    case XYOrigin.TOP_LEFT: dx = -minX; dy = -maxY; break;
+    case XYOrigin.TOP_RIGHT: dx = -maxX; dy = -maxY; break;
+    default: dx = -minX; dy = -minY; break;
+  }
+  return { dx, dy };
+}
+
+/**
+ * @param {{ x: number, y: number }[]} points
+ * @param {{ dx: number, dy: number }} shift
+ * @returns {{ x: number, y: number }[]}
+ */
+function applyDxfOriginShiftToPoints(points, shift) {
+  if (!points?.length) return [];
+  return points.map((p) => ({ x: p.x + shift.dx, y: p.y + shift.dy }));
+}
+
+/**
+ * @param {string} dxfText
+ * @param {number} orientationDeg
+ * @returns {{ x: number, y: number, z: number }[][]}
+ */
+function getOrientedDxfContoursFromText(dxfText, orientationDeg) {
+  const contours = parseDxfToContours(dxfText);
+  if (!contours.length) return [];
+  return orientationDeg !== 0 ? rotatePathsAroundOrigin(contours, orientationDeg) : contours;
+}
+
+/**
+ * @param {*} raw
+ * @param {{ x: number, y: number, z: number }[][]} orientedContours
+ */
+function applyDxfOriginToRaw(raw, orientedContours) {
+  const shift = getDxfOriginShift(orientedContours, raw.originParams.xyOrigin);
+  raw.dxfContours = applyOriginToDxfContours(orientedContours, raw.originParams.xyOrigin);
+  if (raw.dxfSupportHoles?.enabled) {
+    const updates = { ...raw.dxfSupportHoles };
+    if (updates.points?.length) {
+      updates.points = applyDxfOriginShiftToPoints(updates.points, shift);
+    }
+    if (updates.pausePoint) {
+      const shifted = applyDxfOriginShiftToPoints([updates.pausePoint], shift);
+      updates.pausePoint = shifted[0];
+    }
+    raw.dxfSupportHoles = updates;
+  }
 }
 
 /**
@@ -1564,6 +1672,7 @@ function readInputsFromForm() {
       width: tabWidth,
       height: tabHeight,
     },
+    dxfSupportHoles: isVectorImportShape(shape) ? readDxfSupportHolesFromForm() : undefined,
   };
 }
 
@@ -1707,6 +1816,7 @@ function getParamsSnapshotReadOnly() {
     const f = el("vector-file");
     const file = f?.files?.[0];
     snap.importFile = file ? { name: file.name, size: file.size, lastModified: file.lastModified } : null;
+    snap.dxfSupportHoles = readDxfSupportHolesFromForm();
   }
   return snap;
 }
@@ -1737,6 +1847,20 @@ function paramsSnapshotsEqual(a, b) {
     const da = a.importFile, db = b.importFile;
     if (!da !== !db) return false;
     if (da && db && (da.name !== db.name || da.size !== db.size || da.lastModified !== db.lastModified)) return false;
+    const sa = a.dxfSupportHoles, sb = b.dxfSupportHoles;
+    if (!sa !== !sb) return false;
+    if (sa && sb) {
+      if (sa.enabled !== sb.enabled || sa.pauseAfter !== sb.pauseAfter) return false;
+      if (!eq(sa.diameter, sb.diameter)) return false;
+      const ppa = sa.pausePoint, ppb = sb.pausePoint;
+      if (!ppa !== !ppb) return false;
+      if (ppa && ppb && (!eq(ppa.x, ppb.x) || !eq(ppa.y, ppb.y))) return false;
+      const pa = sa.points || [], pb = sb.points || [];
+      if (pa.length !== pb.length) return false;
+      for (let i = 0; i < pa.length; i++) {
+        if (!eq(pa[i].x, pb[i].x) || !eq(pa[i].y, pb[i].y)) return false;
+      }
+    }
   }
   return true;
 }
@@ -1906,6 +2030,15 @@ function validateInputs(raw) {
       }
       if (!Number.isFinite(sp.vectorScalePercent) || sp.vectorScalePercent <= 0) {
         errors.push(t("error.positive", { label: t("field.vectorScale") }));
+      }
+      if (raw.dxfSupportHoles?.enabled) {
+        assertPositive(raw.dxfSupportHoles.diameter, "form.dxfSupportHolesDiameter");
+        if (!raw.dxfSupportHoles.points?.length) {
+          errors.push(t("error.dxfSupportNoPoints"));
+        }
+        if (raw.dxfSupportHoles.pauseAfter && !raw.dxfSupportHoles.pausePoint) {
+          errors.push(t("error.dxfSupportNoPausePoint"));
+        }
       }
       break;
     default:
@@ -3612,6 +3745,123 @@ function getResultShapePathsRaw(params) {
 }
 
 /**
+ * Voeg support-gaten toe aan het toolpath (DXF), vóór de contourbewerking.
+ * @param {ToolpathMove[]} moves
+ * @param {*} params
+ * @returns {{ supportMoveStart: number, pauseMoveIndex: number|null, holePoints: {x:number,y:number}[], holeDiameter: number, pausePoint: {x:number,y:number}|null }|null}
+ */
+function appendDxfSupportHolesMoves(moves, params) {
+  const support = params.dxfSupportHoles;
+  if (!support?.enabled || !support.points?.length) return null;
+
+  const cutParams = params.cutParams;
+  const safeZ = cutParams.safeHeight;
+  const holeDiameter = support.diameter;
+  const holeDepth = cutParams.totalDepth;
+  const toolRadius = cutParams.toolDiameter / 2;
+  const holeDepths = computeDepthLevels(holeDepth, cutParams.stepdown);
+  const entryMethod = EntryMethod.PLUNGE;
+  const epsSize = 1e-3;
+  const equalToToolDiameter = Math.abs(holeDiameter - cutParams.toolDiameter) <= epsSize;
+
+  const sortedPoints = [...support.points].sort((a, b) => {
+    if (Math.abs(a.y - b.y) > 1e-6) return a.y - b.y;
+    return a.x - b.x;
+  });
+
+  const supportMoveStart = moves.length;
+  let pauseMoveIndex = null;
+  const pausePt = support.pausePoint ? { x: support.pausePoint.x, y: support.pausePoint.y } : null;
+
+  sortedPoints.forEach((pt, idx) => {
+    let path;
+    let maxHelixRadius;
+    if (equalToToolDiameter || holeDiameter <= cutParams.toolDiameter) {
+      path = [{ x: pt.x, y: pt.y, z: 0 }];
+      maxHelixRadius = undefined;
+    } else {
+      const holeShapeParams = { diameter: holeDiameter };
+      path = generateSpiralPocketCircle(holeShapeParams, cutParams.stepover, toolRadius);
+      maxHelixRadius = Math.max(0, holeDiameter / 2 - toolRadius);
+      path = path.map((p) => ({ x: p.x + pt.x, y: p.y + pt.y, z: p.z }));
+    }
+
+    holeDepths.forEach((depthZ, depthIndex) => {
+      addLayerForPath(
+        moves,
+        path,
+        depthZ,
+        cutParams,
+        false,
+        entryMethod,
+        supportMoveStart === 0 && idx === 0 && depthIndex === 0,
+        safeZ,
+        undefined,
+        false,
+        true,
+        toolRadius,
+        true,
+        maxHelixRadius,
+        equalToToolDiameter || holeDiameter <= cutParams.toolDiameter ? pt.x : undefined,
+        equalToToolDiameter || holeDiameter <= cutParams.toolDiameter ? pt.y : undefined
+      );
+    });
+
+    const last = moves[moves.length - 1];
+    if (last && last.z < safeZ - 1e-6) {
+      moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
+    }
+  });
+
+  if (support.pauseAfter && moves.length > supportMoveStart) {
+    const last = moves[moves.length - 1];
+    const px = pausePt?.x ?? last?.x ?? 0;
+    const py = pausePt?.y ?? last?.y ?? 0;
+    if (last && last.z < safeZ - 1e-6) {
+      moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
+    }
+    const afterRetract = moves[moves.length - 1];
+    if (!afterRetract || Math.hypot(afterRetract.x - px, afterRetract.y - py) > 1e-3) {
+      moves.push({ x: px, y: py, z: safeZ, type: "rapid" });
+    }
+    pauseMoveIndex = moves.length;
+    moves.push({ x: px, y: py, z: safeZ, type: "pause" });
+  }
+
+  return {
+    supportMoveStart,
+    pauseMoveIndex,
+    holePoints: sortedPoints.map((p) => ({ x: p.x, y: p.y })),
+    holeDiameter,
+    pausePoint: pausePt ? { x: pausePt.x, y: pausePt.y } : null,
+  };
+}
+
+/**
+ * @param {{ supportMoveStart: number, pauseMoveIndex: number|null, holePoints: {x:number,y:number}[], holeDiameter: number }|null} supportMeta
+ * @param {{ shiftX: number, shiftY: number, zOffset: number, zOriginMode: string }} shift
+ * @param {number} totalDepth
+ */
+function buildDxfSupportPreviewFields(supportMeta, shift, totalDepth) {
+  if (!supportMeta) return {};
+  const holePoints = supportMeta.holePoints.map((p) => ({ x: p.x, y: p.y, z: 0 }));
+  applyOriginTransformToPoints(holePoints, shift.shiftX, shift.shiftY, shift.zOffset, shift.zOriginMode, totalDepth);
+  let pausePoint = null;
+  if (supportMeta.pausePoint) {
+    const pt = [{ x: supportMeta.pausePoint.x, y: supportMeta.pausePoint.y, z: 0 }];
+    applyOriginTransformToPoints(pt, shift.shiftX, shift.shiftY, shift.zOffset, shift.zOriginMode, totalDepth);
+    pausePoint = { x: pt[0].x, y: pt[0].y };
+  }
+  return {
+    dxfSupportMoveStart: supportMeta.supportMoveStart,
+    dxfSupportPauseIndex: supportMeta.pauseMoveIndex,
+    dxfSupportHolePoints: holePoints.map((p) => ({ x: p.x, y: p.y })),
+    dxfSupportHoleDiameter: supportMeta.holeDiameter,
+    dxfSupportPausePoint: pausePoint,
+  };
+}
+
+/**
  * Toolpath genereren met lagen, insteek en origin-correctie.
  * @returns {Toolpath}
  */
@@ -3769,6 +4019,7 @@ function generateToolpath(params) {
   if (isVectorImportShape(shape)) {
     const dxfContours = params.dxfContours;
     if (!dxfContours || dxfContours.length === 0) return { moves: [] };
+    const supportMeta = appendDxfSupportHolesMoves(moves, params);
     const entryMethod = effectiveEntryMethod(shape, params.contourType, params.letterMode, cutParams.entryMethod);
     const safeZ = cutParams.safeHeight;
 
@@ -3954,10 +4205,15 @@ function generateToolpath(params) {
         resultContourInside,
         resultBounds,
         toolDiameter: isDxfEngraving ? 0 : cutParams.toolDiameter,
+        ...buildDxfSupportPreviewFields(supportMeta, shift, cutParams.totalDepth),
       };
     }
     const isDxfEngraving = normalizeContourType(params.contourType) === "engraving";
-    return { moves, toolDiameter: isDxfEngraving ? 0 : cutParams.toolDiameter };
+    return {
+      moves,
+      toolDiameter: isDxfEngraving ? 0 : cutParams.toolDiameter,
+      ...buildDxfSupportPreviewFields(supportMeta, shift, cutParams.totalDepth),
+    };
   }
 
   // Bout met verzonken kop: eerst verzinking (kop-gat), dan boutgat
@@ -6445,6 +6701,14 @@ function appendToolpathMovesAsGcode(lines, moves, cutParams, ctx) {
   let idx = 0;
   while (idx < moves.length) {
     const m = moves[idx];
+    if (m.type === "pause") {
+      const pauseZ = useInch ? fromMm(cutParams.safeHeight ?? DEFAULT_SAFE_Z, "inch") : (cutParams.safeHeight ?? DEFAULT_SAFE_Z);
+      lines.push(`G0 Z${pauseZ.toFixed(decimals)}`);
+      lines.push(`(${t("gcode.comment.dxfSupportPause")})`);
+      lines.push("M0");
+      idx++;
+      continue;
+    }
     const x = Number.isFinite(m.x) ? tx(m.x) : null;
     const y = Number.isFinite(m.y) ? ty(m.y) : null;
     const z = Number.isFinite(m.z) ? m.z : null;
@@ -6826,6 +7090,10 @@ function renderPreview(toolpath, canvas, viewMode = currentPreviewView, cursorCo
   }
 
   toolpath.moves.forEach((m, idx) => {
+    if (m.type === "pause") {
+      projected[idx] = null;
+      return;
+    }
     if (
       !Number.isFinite(m.x) ||
       !Number.isFinite(m.y) ||
@@ -7125,6 +7393,16 @@ function renderPreview(toolpath, canvas, viewMode = currentPreviewView, cursorCo
   }
 
   // Toolpath tekenen
+  const supportMoveStart = Number.isFinite(toolpath.dxfSupportMoveStart) ? toolpath.dxfSupportMoveStart : -1;
+  const supportPauseIndex = Number.isFinite(toolpath.dxfSupportPauseIndex) ? toolpath.dxfSupportPauseIndex : -1;
+
+  function isSupportPhaseMove(index, move) {
+    if (supportMoveStart < 0 || index < supportMoveStart) return false;
+    if (move.type === "pause") return false;
+    if (supportPauseIndex >= 0 && index >= supportPauseIndex) return false;
+    return true;
+  }
+
   let last = null;
   for (let i = 0; i < toolpath.moves.length; i++) {
     const m = toolpath.moves[i];
@@ -7155,24 +7433,72 @@ function renderPreview(toolpath, canvas, viewMode = currentPreviewView, cursorCo
         const startAngle = Math.atan2(startC.y - centerC.y, startC.x - centerC.x);
         const endAngle = Math.atan2(p.y - centerC.y, p.x - centerC.x);
         ctx.arc(centerC.x, centerC.y, r, startAngle, endAngle, !m.clockwise);
-        ctx.strokeStyle = "#38bdf8";
+        ctx.strokeStyle = isSupportPhaseMove(i, m) ? "#f472b6" : "#38bdf8";
         ctx.setLineDash([]);
         ctx.lineWidth = 2;
       } else {
         ctx.lineTo(p.x, p.y);
         if (m.type === "rapid") {
-          ctx.strokeStyle = "#f97316";
+          ctx.strokeStyle = isSupportPhaseMove(i, m) ? "#fb923c" : "#f97316";
           ctx.setLineDash([6, 4]);
           ctx.lineWidth = 1.5;
         } else {
-          ctx.strokeStyle = "#38bdf8";
+          ctx.strokeStyle = isSupportPhaseMove(i, m) ? "#f472b6" : "#38bdf8";
           ctx.setLineDash([]);
-          ctx.lineWidth = 2;
+          ctx.lineWidth = isSupportPhaseMove(i, m) ? 2.5 : 2;
         }
       }
       ctx.stroke();
     }
     last = p;
+  }
+
+  // Support-gaten en pauze-marker (top view)
+  if (viewMode === PreviewViewMode.TOP && supportMoveStart >= 0) {
+    ctx.save();
+    if (toolpath.dxfSupportHolePoints?.length && Number.isFinite(toolpath.dxfSupportHoleDiameter)) {
+      const holeR = toolpath.dxfSupportHoleDiameter / 2;
+      ctx.fillStyle = "rgba(244, 114, 182, 0.18)";
+      ctx.strokeStyle = "rgba(244, 114, 182, 0.75)";
+      ctx.lineWidth = 1;
+      toolpath.dxfSupportHolePoints.forEach((pt) => {
+        const center = toCanvas(projectPoint(pt.x - cx, pt.y - cy, (cz - 0) * DEPTH_SCALE));
+        const edge = toCanvas(projectPoint(pt.x + holeR - cx, pt.y - cy, (cz - 0) * DEPTH_SCALE));
+        const rPx = Math.max(3, Math.abs(edge.x - center.x));
+        ctx.beginPath();
+        ctx.arc(center.x, center.y, rPx, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      });
+    }
+    if (supportPauseIndex >= 0 && toolpath.moves[supportPauseIndex]) {
+      const pauseMove = toolpath.moves[supportPauseIndex];
+      const pauseCanvas = toCanvas(projectPoint(
+        pauseMove.x - cx,
+        pauseMove.y - cy,
+        (cz - pauseMove.z) * DEPTH_SCALE
+      ));
+      ctx.strokeStyle = "#facc15";
+      ctx.fillStyle = "rgba(250, 204, 21, 0.25)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      const s = 10;
+      ctx.beginPath();
+      ctx.moveTo(pauseCanvas.x, pauseCanvas.y - s);
+      ctx.lineTo(pauseCanvas.x + s, pauseCanvas.y);
+      ctx.lineTo(pauseCanvas.x, pauseCanvas.y + s);
+      ctx.lineTo(pauseCanvas.x - s, pauseCanvas.y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#facc15";
+      ctx.font = "bold 11px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText("M0", pauseCanvas.x, pauseCanvas.y - s - 4);
+    }
+    ctx.restore();
   }
 
   // Origin markeren (0,0)
@@ -7483,6 +7809,46 @@ function renderPreview(toolpath, canvas, viewMode = currentPreviewView, cursorCo
 
     ctx.restore();
   }
+
+  if (supportMoveStart >= 0) {
+    const isLightTheme = typeof document !== "undefined" && document.body?.dataset.theme === "light";
+    ctx.save();
+    ctx.font = "11px system-ui, sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    const legendX = 10;
+    let legendY = 10;
+    const lineH = 16;
+    ctx.fillStyle = isLightTheme ? "rgba(255,255,255,0.92)" : "rgba(15,23,42,0.82)";
+    ctx.fillRect(legendX - 6, legendY - 4, 168, supportPauseIndex >= 0 ? 70 : 54);
+    ctx.fillStyle = isLightTheme ? "#334155" : "#e2e8f0";
+    ctx.fillRect(legendX, legendY + 4, 14, 3);
+    ctx.fillStyle = isLightTheme ? "#64748b" : "#cbd5e1";
+    ctx.fillText(t("preview.legendSupportHoles"), legendX + 20, legendY);
+    legendY += lineH;
+    ctx.strokeStyle = "#38bdf8";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(legendX, legendY + 6);
+    ctx.lineTo(legendX + 14, legendY + 6);
+    ctx.stroke();
+    ctx.fillStyle = isLightTheme ? "#64748b" : "#cbd5e1";
+    ctx.fillText(t("preview.legendDxfCut"), legendX + 20, legendY);
+    if (supportPauseIndex >= 0) {
+      legendY += lineH;
+      ctx.fillStyle = "#facc15";
+      ctx.beginPath();
+      ctx.moveTo(legendX + 7, legendY);
+      ctx.lineTo(legendX + 14, legendY + 7);
+      ctx.lineTo(legendX + 7, legendY + 14);
+      ctx.lineTo(legendX, legendY + 7);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = isLightTheme ? "#64748b" : "#cbd5e1";
+      ctx.fillText(t("preview.legendPauseM0"), legendX + 20, legendY);
+    }
+    ctx.restore();
+  }
 }
 
 /**
@@ -7599,6 +7965,685 @@ const LAST_SETTINGS_STORAGE_KEY = "gcode-last-settings";
 const CHAIN_MODE_STORAGE_KEY = "gcode-chain-enabled";
 const LEGACY_CHAIN_MODE_STORAGE_KEY = "gcode-chain-mode";
 
+/** @type {{ x: number, y: number }[]} */
+let currentDxfSupportPoints = [];
+
+/** @type {{ x: number, y: number }|null} */
+let currentDxfSupportPausePoint = null;
+
+/** @type {string|null} */
+let dxfLoadedTextForSupport = null;
+
+/** @type {{ x: number, y: number, z: number }[][]} */
+let dxfSupportPopupContours = [];
+
+/** @type {{ x: number, y: number }[]} */
+let dxfSupportPopupPoints = [];
+
+/** @type {{ x: number, y: number }|null} */
+let dxfSupportPopupPausePoint = null;
+
+/** @type {"holes"|"pause"} */
+let dxfSupportPopupMode = "holes";
+
+/** @type {object|null} */
+let dxfSupportPopupView = null;
+
+/** @type {{ lastSx: number, lastSy: number }|null} */
+let dxfSupportPanDrag = null;
+
+let dxfSupportSpacePanHeld = false;
+
+let dxfSupportPanMoved = false;
+
+const DXF_SUPPORT_ZOOM_MIN = 0.25;
+const DXF_SUPPORT_ZOOM_MAX = 12;
+const DXF_SUPPORT_ZOOM_STEP = 1.15;
+
+function getDxfSupportHoleDiameterMm() {
+  const displayUnit = getDisplayUnit();
+  const diaRaw = toNumber(document.getElementById("dxf-support-holes-diameter")?.value);
+  if (Number.isFinite(diaRaw) && diaRaw > 0) return toMm(diaRaw, displayUnit);
+  const toolRaw = toNumber(document.getElementById("tool-diameter")?.value);
+  return toMm(toolRaw, displayUnit);
+}
+
+function syncDxfSupportHoleDiameterFromTool(force = false) {
+  const el = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-support-holes-diameter"));
+  if (!el) return;
+  const toolRaw = toNumber(document.getElementById("tool-diameter")?.value);
+  if (!Number.isFinite(toolRaw) || toolRaw <= 0) return;
+  if (!force) {
+    const diaRaw = toNumber(el.value);
+    if (Number.isFinite(diaRaw) && diaRaw > 0) return;
+  }
+  el.value = String(fromMm(toMm(toolRaw, getDisplayUnit()), getDisplayUnit()));
+}
+
+/**
+ * @returns {{ enabled: boolean, pauseAfter: boolean, diameter: number, points: {x:number,y:number}[], pausePoint: {x:number,y:number}|null }}
+ */
+function readDxfSupportHolesFromForm() {
+  const enabled = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-support-holes-enabled"))?.checked ?? false;
+  const pauseAfter = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-support-pause-after"))?.checked ?? true;
+  const diameter = getDxfSupportHoleDiameterMm();
+  return {
+    enabled,
+    pauseAfter,
+    diameter,
+    points: currentDxfSupportPoints.map((p) => ({ x: p.x, y: p.y })),
+    pausePoint: currentDxfSupportPausePoint ? { x: currentDxfSupportPausePoint.x, y: currentDxfSupportPausePoint.y } : null,
+  };
+}
+
+function updateDxfSupportOpenButton() {
+  const openBtn = document.getElementById("dxf-support-open-btn");
+  if (!openBtn) return;
+  const count = currentDxfSupportPoints.length;
+  openBtn.textContent = count > 0 ? t("form.dxfSupportEditCanvas") : t("form.dxfSupportOpenCanvas");
+}
+
+function updateDxfSupportPointsSummary() {
+  updateDxfSupportOpenButton();
+}
+
+function updateDxfSupportPopupCount() {
+  const el = document.getElementById("dxf-support-popup-count");
+  if (!el) return;
+  const parts = [t("dxfSupport.popupCount", { count: String(dxfSupportPopupPoints.length) })];
+  if (dxfSupportPopupPausePoint) parts.push(t("dxfSupport.popupPauseSet"));
+  el.textContent = parts.join(" · ");
+}
+
+function updateDxfSupportPopupModeButtons() {
+  document.querySelectorAll(".dxf-support-mode-btn").forEach((btn) => {
+    const mode = btn.getAttribute("data-dxf-support-mode");
+    btn.classList.toggle("dxf-support-mode-btn--active", mode === dxfSupportPopupMode);
+  });
+}
+
+function setDxfSupportPopupMode(mode) {
+  dxfSupportPopupMode = mode === "pause" ? "pause" : "holes";
+  updateDxfSupportPopupModeButtons();
+}
+
+function updateDxfSupportSettingsVisibility() {
+  const enabled = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-support-holes-enabled"))?.checked ?? false;
+  const opType = document.getElementById("operation-type")?.value ?? OperationTypeCategory.SHAPES;
+  const shapeValue = document.getElementById("shape")?.value ?? ShapeType.CIRCLE;
+  const isVectorImport = resolveEffectiveShape(opType, shapeValue) === ShapeType.VECTOR_IMPORT;
+  const settings = document.getElementById("dxf-support-settings");
+  if (settings) settings.classList.toggle("hidden", !enabled || !isVectorImport);
+}
+
+function syncDxfSupportPointsToActiveChainStep() {
+  if (!isChainModeEnabled()) return;
+  const idx = getChainActiveStepIndex();
+  if (idx < 0 || !chainJobSteps[idx]?.formState) return;
+  chainJobSteps[idx].formState.dxfSupportPoints = currentDxfSupportPoints.map((p) => ({ x: p.x, y: p.y }));
+  chainJobSteps[idx].formState.dxfSupportPausePoint = currentDxfSupportPausePoint
+    ? { x: currentDxfSupportPausePoint.x, y: currentDxfSupportPausePoint.y }
+    : null;
+}
+
+function setCurrentDxfSupportPausePoint(point, syncChain = true) {
+  currentDxfSupportPausePoint = point ? { x: point.x, y: point.y } : null;
+  if (syncChain) syncDxfSupportPointsToActiveChainStep();
+  if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
+}
+
+function setCurrentDxfSupportPoints(points, syncChain = true) {
+  currentDxfSupportPoints = (points || []).map((p) => ({ x: p.x, y: p.y }));
+  updateDxfSupportPointsSummary();
+  if (syncChain) syncDxfSupportPointsToActiveChainStep();
+  if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
+}
+
+function clearDxfSupportPoints(showHint = false) {
+  const hadPoints = currentDxfSupportPoints.length > 0;
+  const hadPause = !!currentDxfSupportPausePoint;
+  if (!hadPoints && !hadPause) return;
+  setCurrentDxfSupportPoints([]);
+  setCurrentDxfSupportPausePoint(null, false);
+  syncDxfSupportPointsToActiveChainStep();
+  if (showHint) {
+    const errorMessage = document.getElementById("error-message");
+    if (errorMessage) errorMessage.textContent = t("dxfSupport.pointsCleared");
+  }
+}
+
+async function getActiveImportFileForSupport() {
+  if (isChainModeEnabled()) {
+    const idx = getChainActiveStepIndex();
+    if (idx >= 0 && chainJobSteps[idx]?.dxfText) {
+      return { text: chainJobSteps[idx].dxfText, name: chainJobSteps[idx].dxfFileName || "" };
+    }
+  }
+  if (dxfLoadedTextForSupport) {
+    const fileInput = /** @type {HTMLInputElement|null} */ (document.getElementById("vector-file"));
+    return { text: dxfLoadedTextForSupport, name: fileInput?.files?.[0]?.name || "" };
+  }
+  return readVectorImportTextFromFileInput();
+}
+
+function buildDxfSupportPopupView(canvas, contours) {
+  const padding = 28;
+  const bounds = computeBoundsFromPaths(contours);
+  if (!bounds) return null;
+  const w = Math.max(bounds.maxX - bounds.minX, 1e-3);
+  const h = Math.max(bounds.maxY - bounds.minY, 1e-3);
+  const scale = Math.min((canvas.width - 2 * padding) / w, (canvas.height - 2 * padding) / h);
+  return { canvas, bounds, scale, padding, panX: 0, panY: 0, zoom: 1 };
+}
+
+function dxfSupportEffectiveScale(view) {
+  return view.scale * (view.zoom || 1);
+}
+
+function dxfSupportApplyZoomAtScreen(view, newZoom, anchorSx, anchorSy) {
+  const oldZoom = view.zoom || 1;
+  const clamped = Math.max(DXF_SUPPORT_ZOOM_MIN, Math.min(DXF_SUPPORT_ZOOM_MAX, newZoom));
+  if (Math.abs(clamped - oldZoom) < 1e-6) return;
+  const ratio = clamped / oldZoom;
+  const panX = view.panX || 0;
+  const panY = view.panY || 0;
+  const pad = view.padding;
+  const h = view.canvas.height;
+  view.panX = anchorSx - pad - (anchorSx - pad - panX) * ratio;
+  view.panY = anchorSy - (h - pad) + (h - pad - anchorSy + panY) * ratio;
+  view.zoom = clamped;
+}
+
+function dxfSupportZoomByFactor(view, factor, anchorSx, anchorSy) {
+  dxfSupportApplyZoomAtScreen(view, (view.zoom || 1) * factor, anchorSx, anchorSy);
+}
+
+function dxfSupportResetPopupView(view) {
+  view.panX = 0;
+  view.panY = 0;
+  view.zoom = 1;
+}
+
+function dxfSupportEventToCanvas(evt, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return {
+    sx: (evt.clientX - rect.left) * scaleX,
+    sy: (evt.clientY - rect.top) * scaleY,
+  };
+}
+
+function updateDxfSupportCanvasCursor(canvas) {
+  if (!canvas) return;
+  canvas.classList.toggle("dxf-support-canvas--panning", !!dxfSupportPanDrag);
+  canvas.classList.toggle("dxf-support-canvas--pan-ready", dxfSupportSpacePanHeld && !dxfSupportPanDrag);
+}
+
+function dxfSupportWorldToScreen(x, y, view) {
+  const panX = view.panX || 0;
+  const panY = view.panY || 0;
+  const s = dxfSupportEffectiveScale(view);
+  const sx = view.padding + (x - view.bounds.minX) * s + panX;
+  const sy = view.canvas.height - view.padding - (y - view.bounds.minY) * s + panY;
+  return { sx, sy };
+}
+
+function dxfSupportScreenToWorld(sx, sy, view) {
+  const panX = view.panX || 0;
+  const panY = view.panY || 0;
+  const s = dxfSupportEffectiveScale(view);
+  const x = view.bounds.minX + (sx - view.padding - panX) / s;
+  const y = view.bounds.minY + (view.canvas.height - view.padding - sy + panY) / s;
+  return { x, y };
+}
+
+function renderDxfSupportCanvas() {
+  renderDxfSupportPlaceCanvas();
+}
+
+function renderDxfSupportPlaceCanvas() {
+  const canvas = /** @type {HTMLCanvasElement|null} */ (document.getElementById("dxf-support-canvas"));
+  if (!canvas || !dxfSupportPopupView) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const view = dxfSupportPopupView;
+  const displayUnit = getDisplayUnit();
+  const diaRaw = toNumber(document.getElementById("dxf-support-holes-diameter")?.value);
+  const holeDiameterMm = toMm(diaRaw, displayUnit);
+  const holeRadiusMm = Number.isFinite(holeDiameterMm) && holeDiameterMm > 0 ? holeDiameterMm / 2 : 0;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#0f172a";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.strokeStyle = "rgba(148, 163, 184, 0.9)";
+  ctx.lineWidth = 1.5;
+  dxfSupportPopupContours.forEach((contour) => {
+    if (!contour.length) return;
+    ctx.beginPath();
+    const first = dxfSupportWorldToScreen(contour[0].x, contour[0].y, view);
+    ctx.moveTo(first.sx, first.sy);
+    for (let i = 1; i < contour.length; i++) {
+      const p = dxfSupportWorldToScreen(contour[i].x, contour[i].y, view);
+      ctx.lineTo(p.sx, p.sy);
+    }
+    ctx.stroke();
+  });
+
+  if (dxfSupportPopupPoints.length > 1) {
+    const sorted = [...dxfSupportPopupPoints].sort((a, b) => {
+      if (Math.abs(a.y - b.y) > 1e-6) return a.y - b.y;
+      return a.x - b.x;
+    });
+    ctx.strokeStyle = "rgba(251, 146, 60, 0.85)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([8, 6]);
+    ctx.beginPath();
+    sorted.forEach((pt, idx) => {
+      const { sx, sy } = dxfSupportWorldToScreen(pt.x, pt.y, view);
+      if (idx === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  dxfSupportPopupPoints.forEach((pt, index) => {
+    const { sx, sy } = dxfSupportWorldToScreen(pt.x, pt.y, view);
+    const rPx = holeRadiusMm > 0 ? holeRadiusMm * dxfSupportEffectiveScale(view) : 6;
+    ctx.beginPath();
+    ctx.strokeStyle = "rgba(248, 113, 113, 0.55)";
+    ctx.lineWidth = 1;
+    ctx.arc(sx, sy, Math.max(rPx, 4), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = "#f87171";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(sx - 7, sy);
+    ctx.lineTo(sx + 7, sy);
+    ctx.moveTo(sx, sy - 7);
+    ctx.lineTo(sx, sy + 7);
+    ctx.stroke();
+    ctx.fillStyle = "#f87171";
+    ctx.beginPath();
+    ctx.arc(sx, sy, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#f8fafc";
+    ctx.font = "bold 11px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(index + 1), sx, sy);
+  });
+
+  if (dxfSupportPopupPausePoint) {
+    const { sx, sy } = dxfSupportWorldToScreen(dxfSupportPopupPausePoint.x, dxfSupportPopupPausePoint.y, view);
+    ctx.strokeStyle = "#facc15";
+    ctx.fillStyle = "rgba(250, 204, 21, 0.25)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 4]);
+    const s = 12;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy - s);
+    ctx.lineTo(sx + s, sy);
+    ctx.lineTo(sx, sy + s);
+    ctx.lineTo(sx - s, sy);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#facc15";
+    ctx.font = "bold 11px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.fillText("M0", sx, sy - s - 4);
+  }
+
+  updateDxfSupportPopupCount();
+}
+
+function removeNearestDxfSupportPopupPoint(sx, sy, maxDistPx = 12) {
+  if (!dxfSupportPopupView || !dxfSupportPopupPoints.length) return;
+  let bestIdx = -1;
+  let bestDist = maxDistPx;
+  dxfSupportPopupPoints.forEach((pt, idx) => {
+    const p = dxfSupportWorldToScreen(pt.x, pt.y, dxfSupportPopupView);
+    const d = Math.hypot(p.sx - sx, p.sy - sy);
+    if (d < bestDist) {
+      bestDist = d;
+      bestIdx = idx;
+    }
+  });
+  if (bestIdx >= 0) {
+    dxfSupportPopupPoints.splice(bestIdx, 1);
+    renderDxfSupportCanvas();
+  }
+}
+
+async function openDxfSupportPopup() {
+  const overlay = document.getElementById("dxf-support-overlay");
+  const canvas = /** @type {HTMLCanvasElement|null} */ (document.getElementById("dxf-support-canvas"));
+  const errorMessage = document.getElementById("error-message");
+  if (!overlay || !canvas) return;
+
+  const { text: importText, name: importName } = await getActiveImportFileForSupport();
+  if (!importText) {
+    if (errorMessage) errorMessage.textContent = t("dxfSupport.noDxf");
+    return;
+  }
+
+  const shapeParams = {
+    vectorOrientation: Number(document.getElementById("vector-orientation")?.value) || 0,
+    vectorScalePercent: Number(document.getElementById("vector-scale")?.value) || 100,
+  };
+  dxfSupportPopupContours = buildOrientedImportContoursForSupport(importName, importText, shapeParams);
+  if (!dxfSupportPopupContours.length) {
+    if (errorMessage) errorMessage.textContent = t("dxfSupport.noContours");
+    return;
+  }
+
+  dxfSupportPopupPoints = currentDxfSupportPoints.map((p) => ({ x: p.x, y: p.y }));
+  dxfSupportPopupPausePoint = currentDxfSupportPausePoint ? { x: currentDxfSupportPausePoint.x, y: currentDxfSupportPausePoint.y } : null;
+  dxfSupportPopupMode = "holes";
+  dxfSupportPopupView = buildDxfSupportPopupView(canvas, dxfSupportPopupContours);
+  updateDxfSupportPopupModeButtons();
+  renderDxfSupportCanvas();
+  overlay.classList.remove("hidden");
+  overlay.focus();
+  if (errorMessage) errorMessage.textContent = "";
+}
+
+function closeDxfSupportPopup(save) {
+  const overlay = document.getElementById("dxf-support-overlay");
+  if (!overlay) return;
+  dxfSupportPanDrag = null;
+  dxfSupportSpacePanHeld = false;
+  dxfSupportPanMoved = false;
+  if (save) {
+    setCurrentDxfSupportPoints(dxfSupportPopupPoints);
+    setCurrentDxfSupportPausePoint(dxfSupportPopupPausePoint);
+  }
+  overlay.classList.add("hidden");
+}
+
+function activateTopPreviewIfSupportHoles(toolpath) {
+  if (!toolpath || !Number.isFinite(toolpath.dxfSupportMoveStart) || toolpath.dxfSupportMoveStart < 0) return;
+  currentPreviewView = PreviewViewMode.TOP;
+  document.querySelectorAll(".preview-view-btn").forEach((btn) => {
+    btn.classList.toggle("preview-view-btn--active", btn.getAttribute("data-view") === "top");
+  });
+}
+
+function showGeneratedToolpathPreview(toolpath, previewCanvas, cursorColumn = null) {
+  if (!previewCanvas) return;
+  activateTopPreviewIfSupportHoles(toolpath);
+  renderPreview(toolpath, previewCanvas, currentPreviewView, cursorColumn);
+  if (Number.isFinite(toolpath.dxfSupportMoveStart) && toolpath.dxfSupportMoveStart >= 0) {
+    previewCanvas.closest(".preview-canvas-wrap")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+}
+
+function resetDxfSupportToDefaults() {
+  const enabledCb = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-support-holes-enabled"));
+  const pauseCb = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-support-pause-after"));
+  const diameterInput = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-support-holes-diameter"));
+  if (enabledCb) enabledCb.checked = false;
+  if (pauseCb) pauseCb.checked = true;
+  if (diameterInput) diameterInput.value = "";
+  setCurrentDxfSupportPoints([], false);
+  setCurrentDxfSupportPausePoint(null, false);
+  syncDxfSupportPointsToActiveChainStep();
+  syncDxfSupportHoleDiameterFromTool(true);
+  updateDxfSupportSettingsVisibility();
+  updateDxfSupportOpenButton();
+}
+
+function initDxfSupportUI() {
+  const enabledCb = document.getElementById("dxf-support-holes-enabled");
+  const openBtn = document.getElementById("dxf-support-open-btn");
+  const undoBtn = document.getElementById("dxf-support-undo-btn");
+  const clearBtn = document.getElementById("dxf-support-clear-btn");
+  const clearPauseBtn = document.getElementById("dxf-support-clear-pause-btn");
+  const resetViewBtn = document.getElementById("dxf-support-reset-view-btn");
+  const zoomInBtn = document.getElementById("dxf-support-zoom-in-btn");
+  const zoomOutBtn = document.getElementById("dxf-support-zoom-out-btn");
+  const modeHolesBtn = document.getElementById("dxf-support-mode-holes");
+  const modePauseBtn = document.getElementById("dxf-support-mode-pause");
+  const doneBtn = document.getElementById("dxf-support-done-btn");
+  const cancelBtn = document.getElementById("dxf-support-cancel-btn");
+  const overlay = document.getElementById("dxf-support-overlay");
+  const canvas = /** @type {HTMLCanvasElement|null} */ (document.getElementById("dxf-support-canvas"));
+  const vectorOrientation = document.getElementById("vector-orientation");
+  const vectorScale = document.getElementById("vector-scale");
+  const vectorFileInput = document.getElementById("vector-file");
+  const diameterInput = document.getElementById("dxf-support-holes-diameter");
+
+  if (enabledCb) {
+    enabledCb.addEventListener("change", () => {
+      updateDxfSupportSettingsVisibility();
+      syncDxfSupportHoleDiameterFromTool(true);
+      if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
+    });
+  }
+  const toolDiameterInput = document.getElementById("tool-diameter");
+  if (toolDiameterInput) {
+    toolDiameterInput.addEventListener("input", syncDxfSupportHoleDiameterFromTool);
+    toolDiameterInput.addEventListener("change", syncDxfSupportHoleDiameterFromTool);
+  }
+  ["dxf-support-pause-after"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("input", () => { if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator(); });
+    el.addEventListener("change", () => { if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator(); });
+  });
+  if (diameterInput) {
+    diameterInput.addEventListener("input", () => {
+      if (!overlay?.classList.contains("hidden")) renderDxfSupportCanvas();
+      if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
+    });
+  }
+  if (openBtn) openBtn.addEventListener("click", () => { openDxfSupportPopup(); });
+  if (undoBtn) {
+    undoBtn.addEventListener("click", () => {
+      dxfSupportPopupPoints.pop();
+      renderDxfSupportCanvas();
+    });
+  }
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      dxfSupportPopupPoints = [];
+      dxfSupportPopupPausePoint = null;
+      renderDxfSupportCanvas();
+    });
+  }
+  if (clearPauseBtn) {
+    clearPauseBtn.addEventListener("click", () => {
+      dxfSupportPopupPausePoint = null;
+      renderDxfSupportCanvas();
+    });
+  }
+  if (modeHolesBtn) modeHolesBtn.addEventListener("click", () => setDxfSupportPopupMode("holes"));
+  if (modePauseBtn) modePauseBtn.addEventListener("click", () => setDxfSupportPopupMode("pause"));
+  if (resetViewBtn) {
+    resetViewBtn.addEventListener("click", () => {
+      if (dxfSupportPopupView) {
+        dxfSupportResetPopupView(dxfSupportPopupView);
+        renderDxfSupportCanvas();
+      }
+    });
+  }
+  if (zoomInBtn) {
+    zoomInBtn.addEventListener("click", () => {
+      if (!dxfSupportPopupView) return;
+      const canvasEl = /** @type {HTMLCanvasElement|null} */ (document.getElementById("dxf-support-canvas"));
+      const anchorSx = canvasEl ? canvasEl.width / 2 : 0;
+      const anchorSy = canvasEl ? canvasEl.height / 2 : 0;
+      dxfSupportZoomByFactor(dxfSupportPopupView, DXF_SUPPORT_ZOOM_STEP, anchorSx, anchorSy);
+      renderDxfSupportCanvas();
+    });
+  }
+  if (zoomOutBtn) {
+    zoomOutBtn.addEventListener("click", () => {
+      if (!dxfSupportPopupView) return;
+      const canvasEl = /** @type {HTMLCanvasElement|null} */ (document.getElementById("dxf-support-canvas"));
+      const anchorSx = canvasEl ? canvasEl.width / 2 : 0;
+      const anchorSy = canvasEl ? canvasEl.height / 2 : 0;
+      dxfSupportZoomByFactor(dxfSupportPopupView, 1 / DXF_SUPPORT_ZOOM_STEP, anchorSx, anchorSy);
+      renderDxfSupportCanvas();
+    });
+  }
+  if (doneBtn) doneBtn.addEventListener("click", () => closeDxfSupportPopup(true));
+  if (cancelBtn) cancelBtn.addEventListener("click", () => closeDxfSupportPopup(false));
+  if (overlay) {
+    overlay.addEventListener("click", (evt) => {
+      if (evt.target === overlay) closeDxfSupportPopup(false);
+    });
+  }
+  if (canvas) {
+    const startPan = (sx, sy) => {
+      dxfSupportPanMoved = false;
+      dxfSupportPanDrag = { lastSx: sx, lastSy: sy };
+      updateDxfSupportCanvasCursor(canvas);
+    };
+    const movePan = (sx, sy) => {
+      if (!dxfSupportPanDrag || !dxfSupportPopupView) return;
+      dxfSupportPanMoved = true;
+      dxfSupportPopupView.panX += sx - dxfSupportPanDrag.lastSx;
+      dxfSupportPopupView.panY += sy - dxfSupportPanDrag.lastSy;
+      dxfSupportPanDrag.lastSx = sx;
+      dxfSupportPanDrag.lastSy = sy;
+      renderDxfSupportCanvas();
+    };
+    const endPan = () => {
+      if (!dxfSupportPanDrag) return;
+      dxfSupportPanDrag = null;
+      updateDxfSupportCanvasCursor(canvas);
+    };
+
+    canvas.addEventListener("mousedown", (evt) => {
+      if (!dxfSupportPopupView) return;
+      const { sx, sy } = dxfSupportEventToCanvas(evt, canvas);
+      if (evt.button === 1 || (evt.button === 0 && (dxfSupportSpacePanHeld || evt.altKey))) {
+        evt.preventDefault();
+        startPan(sx, sy);
+      }
+    });
+    canvas.addEventListener("auxclick", (evt) => {
+      if (evt.button === 1) evt.preventDefault();
+    });
+    canvas.addEventListener("wheel", (evt) => {
+      if (!dxfSupportPopupView) return;
+      evt.preventDefault();
+      const { sx, sy } = dxfSupportEventToCanvas(evt, canvas);
+      const factor = evt.deltaY < 0 ? DXF_SUPPORT_ZOOM_STEP : 1 / DXF_SUPPORT_ZOOM_STEP;
+      dxfSupportZoomByFactor(dxfSupportPopupView, factor, sx, sy);
+      renderDxfSupportCanvas();
+    }, { passive: false });
+    window.addEventListener("mousemove", (evt) => {
+      if (!dxfSupportPanDrag || !canvas) return;
+      const { sx, sy } = dxfSupportEventToCanvas(evt, canvas);
+      movePan(sx, sy);
+    });
+    window.addEventListener("mouseup", () => endPan());
+
+    canvas.addEventListener("click", (evt) => {
+      if (!dxfSupportPopupView) return;
+      if (dxfSupportPanMoved) {
+        dxfSupportPanMoved = false;
+        return;
+      }
+      const { sx, sy } = dxfSupportEventToCanvas(evt, canvas);
+      if (evt.button !== 0 || dxfSupportSpacePanHeld || evt.altKey) return;
+      if (evt.shiftKey || evt.button === 2) {
+        if (dxfSupportPopupMode === "pause") {
+          dxfSupportPopupPausePoint = null;
+        } else {
+          removeNearestDxfSupportPopupPoint(sx, sy);
+        }
+        renderDxfSupportCanvas();
+        return;
+      }
+      const world = dxfSupportScreenToWorld(sx, sy, dxfSupportPopupView);
+      if (dxfSupportPopupMode === "pause") {
+        dxfSupportPopupPausePoint = { x: world.x, y: world.y };
+      } else {
+        dxfSupportPopupPoints.push({ x: world.x, y: world.y });
+      }
+      renderDxfSupportCanvas();
+    });
+    canvas.addEventListener("contextmenu", (evt) => {
+      evt.preventDefault();
+      if (!dxfSupportPopupView) return;
+      const { sx, sy } = dxfSupportEventToCanvas(evt, canvas);
+      if (dxfSupportPopupMode === "pause") {
+        dxfSupportPopupPausePoint = null;
+      } else {
+        removeNearestDxfSupportPopupPoint(sx, sy);
+      }
+      renderDxfSupportCanvas();
+    });
+    document.addEventListener("keydown", (evt) => {
+      const overlayEl = document.getElementById("dxf-support-overlay");
+      if (overlayEl?.classList.contains("hidden")) return;
+      if (evt.code === "Space" && !evt.repeat) {
+        evt.preventDefault();
+        dxfSupportSpacePanHeld = true;
+        updateDxfSupportCanvasCursor(canvas);
+      }
+    });
+    document.addEventListener("keyup", (evt) => {
+      if (evt.code !== "Space") return;
+      dxfSupportSpacePanHeld = false;
+      if (dxfSupportPanDrag) {
+        dxfSupportPanDrag = null;
+      }
+      updateDxfSupportCanvasCursor(canvas);
+    });
+  }
+  if (vectorOrientation) {
+    vectorOrientation.addEventListener("change", () => {
+      clearDxfSupportPoints(true);
+    });
+  }
+  if (vectorScale) {
+    vectorScale.addEventListener("change", () => {
+      clearDxfSupportPoints(true);
+      if (!overlay?.classList.contains("hidden")) renderDxfSupportCanvas();
+    });
+    vectorScale.addEventListener("input", () => {
+      if (!overlay?.classList.contains("hidden")) renderDxfSupportCanvas();
+    });
+  }
+  if (vectorFileInput) {
+    vectorFileInput.addEventListener("change", async () => {
+      const file = vectorFileInput.files?.[0];
+      if (!file) {
+        dxfLoadedTextForSupport = null;
+        resetDxfSupportToDefaults();
+        return;
+      }
+      try {
+        const text = await new Promise((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(String(r.result ?? ""));
+          r.onerror = () => reject(new Error("File read failed"));
+          r.readAsText(file);
+        });
+        dxfLoadedTextForSupport = text;
+        resetDxfSupportToDefaults();
+        if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
+      } catch (_) {
+        dxfLoadedTextForSupport = null;
+        resetDxfSupportToDefaults();
+      }
+    });
+  }
+
+  updateDxfSupportSettingsVisibility();
+  updateDxfSupportPointsSummary();
+  syncDxfSupportHoleDiameterFromTool();
+}
+
 /** @type {{ id: string, formState: object, dxfText: string|null }[]} */
 let chainJobSteps = [];
 /** @type {string|null} */
@@ -7619,6 +8664,7 @@ const CHAIN_CAPTURE_FIELD_IDS = [
   "circular-pattern-holes-start-angle", "circular-pattern-holes-center-hole", "circular-pattern-holes-center-diameter",
   "vector-orientation",
   "vector-scale",
+  "dxf-support-holes-enabled", "dxf-support-holes-diameter", "dxf-support-pause-after",
   "facing-mode", "facing-direction", "facing-finish-mode", "facing-even-spacing",
   "contour-type", "tabs-enabled", "tab-interval", "tab-width", "tab-height",
   "tool-diameter", "total-depth", "multiple-depths", "stepdown", "stepover",
@@ -7710,6 +8756,10 @@ function captureFormStateForChain() {
     entrySpeedUnit: document.querySelector('input[name="entry-speed-unit"]:checked')?.value ?? "percent",
     entryMethod: /** @type {HTMLInputElement|null} */ (document.getElementById("entry-method"))?.value ?? EntryMethod.PLUNGE,
     plungeOutside: /** @type {HTMLInputElement|null} */ (document.getElementById("plunge-outside"))?.value ?? "off",
+    dxfSupportPoints: currentDxfSupportPoints.map((p) => ({ x: p.x, y: p.y })),
+    dxfSupportPausePoint: currentDxfSupportPausePoint
+      ? { x: currentDxfSupportPausePoint.x, y: currentDxfSupportPausePoint.y }
+      : null,
   };
 }
 
@@ -7756,6 +8806,9 @@ function applyFormStateForChain(formState) {
   document.querySelectorAll("[data-plunge-outside]").forEach((b) => {
     b.classList.toggle("entry-method-btn--active", b.getAttribute("data-plunge-outside") === plungeVal);
   });
+  setCurrentDxfSupportPoints(formState.dxfSupportPoints || [], false);
+  setCurrentDxfSupportPausePoint(formState.dxfSupportPausePoint || null, false);
+  updateDxfSupportSettingsVisibility();
 }
 
 function extractBaselineFieldsFromFormState(formState) {
@@ -8034,13 +9087,7 @@ async function prepareRawFromChainStep(step, baselineFields) {
     if (!step.dxfText) {
       throw new Error(t("error.vectorNoFile"));
     }
-    raw.dxfContours = buildImportContoursFromFile(
-      step.dxfFileName || "",
-      step.dxfText,
-      getImportOrientationDeg(raw.shapeParams),
-      Number(raw.shapeParams.vectorScalePercent) || 100,
-      raw.originParams.xyOrigin
-    );
+    applyImportFileToRaw(raw, step.dxfFileName || "", step.dxfText);
   }
   return raw;
 }
@@ -8069,6 +9116,11 @@ function mergeChainToolpaths(stepResults) {
     resultContourInside: last.resultContourInside,
     resultBounds: last.resultBounds,
     toolDiameter: last.toolDiameter,
+    dxfSupportMoveStart: last.dxfSupportMoveStart,
+    dxfSupportPauseIndex: last.dxfSupportPauseIndex,
+    dxfSupportHolePoints: last.dxfSupportHolePoints,
+    dxfSupportHoleDiameter: last.dxfSupportHoleDiameter,
+    dxfSupportPausePoint: last.dxfSupportPausePoint,
   };
 }
 
@@ -8898,6 +9950,7 @@ function setupUI() {
         const scaleEl = /** @type {HTMLInputElement | null} */ (document.getElementById("vector-scale"));
         if (scaleEl) scaleEl.value = "100";
       }
+      syncDxfSupportHoleDiameterFromTool();
       updateContourTypeVisibility();
     } else if (selected === ShapeType.FACING) {
       if (operationRow) operationRow.classList.add("hidden");
@@ -8986,6 +10039,7 @@ function setupUI() {
     updateContourTypeVisibility();
     if (typeof updateStepoverHint === "function") updateStepoverHint();
     updateChainFieldLocks();
+    updateDxfSupportSettingsVisibility();
   }
 
   // Track last effective shape inside closure (static-like property)
@@ -9038,6 +10092,8 @@ function setupUI() {
       }
     });
   }
+
+  initDxfSupportUI();
 
   // Presets: vierkant (50, 100, 150) en rechthoek (A4, A5, A6, foto) via dropdown; geselecteerde preset blijft zichtbaar tot breedte/hoogte handmatig wordt gewijzigd
   const squarePresetSelect = /** @type {HTMLSelectElement | null} */ (document.getElementById("square-preset"));
@@ -10190,6 +11246,7 @@ function setupUI() {
       updatePlaybackButtonsState();
       return;
     }
+    playbackElapsedMs = elapsedMs;
     syncGcodeCursorToPlayback();
     if (previewCanvas) renderPreview(lastToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
   }
@@ -10436,7 +11493,9 @@ function setupUI() {
             time: formatEstimatedTime(totalMinutes),
           });
         }
-        if (previewCanvas) renderPreview(mergedToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
+        if (previewCanvas) {
+          showGeneratedToolpathPreview(mergedToolpath, previewCanvas, getDisplayedColumn());
+        }
 
         saveLastSettings();
         lastGenerationSnapshot = getParamsSnapshotReadOnly();
@@ -10471,13 +11530,7 @@ function setupUI() {
             r.onerror = () => reject(new Error("File read failed"));
             r.readAsText(file);
           });
-          raw.dxfContours = buildImportContoursFromFile(
-            file.name,
-            text,
-            getImportOrientationDeg(raw.shapeParams),
-            Number(raw.shapeParams.vectorScalePercent) || 100,
-            raw.originParams.xyOrigin
-          );
+          applyImportFileToRaw(raw, file.name, text);
         } catch (importErr) {
           const msg = importErr instanceof Error ? importErr.message : String(importErr);
           if (errorMessage) errorMessage.textContent = msg;
@@ -10534,7 +11587,9 @@ function setupUI() {
           time: formatEstimatedTime(est.totalMinutes),
         });
       }
-      if (previewCanvas) renderPreview(toolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
+      if (previewCanvas) {
+        showGeneratedToolpathPreview(toolpath, previewCanvas, getDisplayedColumn());
+      }
 
       saveLastSettings();
       lastGenerationSnapshot = getParamsSnapshotReadOnly();
