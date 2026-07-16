@@ -7644,9 +7644,11 @@ function updateDxfSupportPopupCount() {
 
 function updateDxfSupportSettingsVisibility() {
   const enabled = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-support-holes-enabled"))?.checked ?? false;
-  const shape = document.getElementById("shape")?.value;
+  const opType = document.getElementById("operation-type")?.value ?? OperationTypeCategory.SHAPES;
+  const shapeValue = document.getElementById("shape")?.value ?? ShapeType.CIRCLE;
+  const isDxf = resolveEffectiveShape(opType, shapeValue) === ShapeType.DXF;
   const settings = document.getElementById("dxf-support-settings");
-  if (settings) settings.classList.toggle("hidden", !enabled || shape !== ShapeType.DXF);
+  if (settings) settings.classList.toggle("hidden", !enabled || !isDxf);
 }
 
 function syncDxfSupportPointsToActiveChainStep() {
