@@ -9175,8 +9175,6 @@ function setupUI() {
   updateEntryMethodForEngraving();
   updateRampInputsDisabled();
   updateContourTabsRampHintVisibility();
-  if (typeof updateEntrySpeedLabel === "function") updateEntrySpeedLabel();
-  if (typeof updateEntrySpeedHint === "function") updateEntrySpeedHint();
 
   // Toggle-knoppen voor "Insteken naast part"
   plungeOutsideButtons.forEach((btn) => {
