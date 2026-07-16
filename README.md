@@ -33,6 +33,21 @@ This project was created out of my own need for a practical toolbox, and I want 
 
 # Version
 
+## 4.2
+* SVG contour import (same pipeline as DXF)
+* DXF support screw holes — place M3/M4/M5/M6 holes on a top-view canvas with pan & zoom
+* Visual preview of support holes in toolpath and placement popup
+* Configurable M0 pause position for support holes
+* Optional plunge pecking with configurable peck depth
+* Configurable plunge and ramp entry speed (default 33% of feed rate)
+* Entry and finishing speeds now use direct F values instead of M220
+* Download prompt asks for filename before saving G-code
+* Tool diameter (freesdiameter) added to G-code header comment
+* Locale-tolerant decimal input for tool diameter
+* Fixed decimal precision loss in stepper buttons
+* UI polish: unified button styles, tighter toolbar spacing
+* Various DXF support hole and preview bugfixes
+
 ## 3.8
 * Added origin offset
 * Fixed a bug where finishing pass was showed in facing operation
