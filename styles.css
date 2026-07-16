@@ -861,6 +861,25 @@ legend {
   color: var(--text-soft);
 }
 
+.svg-sample-links {
+  margin-top: 0.35rem;
+}
+
+.svg-sample-list {
+  margin: 0.25rem 0 0.5rem 1.1rem;
+  padding: 0;
+  font-size: 0.86rem;
+  color: var(--text-soft);
+}
+
+.svg-sample-list a {
+  color: var(--accent);
+}
+
+.svg-local-hint code {
+  font-size: 0.82rem;
+}
+
 /* Toggle-knop: randen zoals stepper (+/-), inhoud Ja/Nee */
 .toggle-btn-label {
   display: inline-flex;

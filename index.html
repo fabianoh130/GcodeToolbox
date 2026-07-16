@@ -539,6 +539,17 @@
                   <span class="dxf-file-name" id="svg-file-name"></span>
                 </div>
                 <p class="field-hint" data-i18n="form.svgFileHint">Kies een .svg-bestand. Gesloten contouren (path, polygon, cirkel, rechthoek) worden herkend en uitgefreesd.</p>
+                <div class="svg-sample-links">
+                  <p class="field-hint" data-i18n="form.svgSamplesTitle">Testbestanden (download en laad opnieuw):</p>
+                  <ul class="svg-sample-list">
+                    <li><a href="samples/svg/simple-rect.svg" download="simple-rect.svg">simple-rect.svg</a></li>
+                    <li><a href="samples/svg/circle.svg" download="circle.svg">circle.svg</a></li>
+                    <li><a href="samples/svg/multi-contour.svg" download="multi-contour.svg">multi-contour.svg</a></li>
+                    <li><a href="samples/svg/curved-path.svg" download="curved-path.svg">curved-path.svg</a></li>
+                    <li><a href="samples/svg/polygon-hex.svg" download="polygon-hex.svg">polygon-hex.svg</a></li>
+                  </ul>
+                  <p class="field-hint svg-local-hint"><span data-i18n="form.svgLocalTestHint">Lokaal testen: run ./scripts/serve-local.sh en open localhost:8080.</span> <a href="http://localhost:8080" target="_blank" rel="noopener">→ localhost:8080</a></p>
+                </div>
               </div>
               <div class="field-row shape-field shape-svg hidden">
                 <label for="svg-orientation" data-i18n="form.svgOrientation">Orientatie</label>
