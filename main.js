@@ -7790,7 +7790,7 @@ function dxfSupportScreenToWorld(sx, sy, view) {
   const panX = view.panX || 0;
   const panY = view.panY || 0;
   const x = view.bounds.minX + (sx - view.padding - panX) / view.scale;
-  const y = view.bounds.minY + (view.canvas.height - view.padding - sy - panY) / view.scale;
+  const y = view.bounds.minY + (view.canvas.height - view.padding - sy + panY) / view.scale;
   return { x, y };
 }
 
@@ -8159,7 +8159,6 @@ function initDxfSupportUI() {
       dxfSupportSpacePanHeld = false;
       if (dxfSupportPanDrag) {
         dxfSupportPanDrag = null;
-        dxfSupportPanMoved = true;
       }
       updateDxfSupportCanvasCursor(canvas);
     });
