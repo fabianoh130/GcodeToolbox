@@ -16,6 +16,7 @@ const ShapeType = {
   PATTERNED_HOLES: "patterned_holes",
   CIRCULAR_PATTERN_HOLES: "circular_pattern_holes",
   DXF: "dxf",
+  SVG: "svg",
 };
 
 const OperationType = {
@@ -33,6 +34,7 @@ const OperationTypeCategory = {
   THREAD_MILLING: "thread_milling",
   HOLE_PATTERN: "hole_pattern",
   DXF: "dxf",
+  SVG: "svg",
 };
 
 /** Patroontype binnen de samengevoegde patroongaten-operatie (UI-keuze). */
@@ -84,6 +86,17 @@ function isEngravingContourMode(shape, contourType, letterMode) {
 
 const DXF_ENGRAVING_TOOL_DIAMETER_MM = 4;
 
+/** @param {string} shape */
+function isVectorImportShape(shape) {
+  return shape === ShapeType.DXF || shape === ShapeType.SVG;
+}
+
+/** @param {string} shape @param {object} [shapeParams] */
+function getImportOrientationDeg(shape, shapeParams) {
+  if (shape === ShapeType.SVG) return Number(shapeParams?.svgOrientation) || 0;
+  return Number(shapeParams?.dxfOrientation) || 0;
+}
+
 /**
  * Vaste freesdiameter voor gravure-modi waar het pad niet wordt geoffset.
  * @param {string} shape
@@ -93,7 +106,7 @@ const DXF_ENGRAVING_TOOL_DIAMETER_MM = 4;
  */
 function getEngravingToolDiameterMm(shape, contourType, letterMode) {
   if (shape === ShapeType.LETTERS && (letterMode || "outline") === "outline") return 0.5;
-  if (shape === ShapeType.DXF && normalizeContourType(contourType) === "engraving") return DXF_ENGRAVING_TOOL_DIAMETER_MM;
+  if (isVectorImportShape(shape) && normalizeContourType(contourType) === "engraving") return DXF_ENGRAVING_TOOL_DIAMETER_MM;
   return null;
 }
 
@@ -443,6 +456,7 @@ function getShapeMinSize(shape, shapeParams) {
       }
       return shapeParams.diameter;
     case ShapeType.DXF:
+    case ShapeType.SVG:
       return NaN;
     default:
       return NaN;
@@ -730,7 +744,16 @@ function parseDxfToContours(dxfString) {
       }
     }
   }
-  if (contours.length === 0) return contours;
+  return finalizeImportContours(contours);
+}
+
+/**
+ * Sluit losse segmenten aan tot gesloten contouren (gedeeld door DXF/SVG import).
+ * @param {{ x: number, y: number, z: number }[][]} contours
+ * @returns {{ x: number, y: number, z: number }[][]}
+ */
+function finalizeImportContours(contours) {
+  if (!contours || contours.length === 0) return contours;
   const closedContours = contours.filter((c) => c.length >= 3 &&
     Math.hypot(c[c.length - 1].x - c[0].x, c[c.length - 1].y - c[0].y) < 1e-6);
   const lineSegments = contours.filter((c) => c.length === 2);
@@ -738,6 +761,51 @@ function parseDxfToContours(dxfString) {
     closedContours.push(...buildClosedChainsFromLines(lineSegments));
   }
   return closedContours.length > 0 ? closedContours : contours.filter((c) => c.length >= 3);
+}
+
+/**
+ * @param {string} shape
+ * @param {string} fileText
+ * @returns {{ x: number, y: number, z: number }[][]}
+ */
+function parseVectorImportToContours(shape, fileText) {
+  if (shape === ShapeType.DXF) return parseDxfToContours(fileText);
+  if (shape === ShapeType.SVG) {
+    const contours = parseSvgToContours(fileText, t);
+    return finalizeImportContours(contours);
+  }
+  throw new Error(t("error.unknownShape"));
+}
+
+/**
+ * @param {string} shape
+ * @returns {Promise<{ text: string|null, name: string|null }>}
+ */
+async function readVectorImportTextFromFileInput(shape) {
+  const inputId = shape === ShapeType.SVG ? "svg-file" : "dxf-file";
+  const fileInput = /** @type {HTMLInputElement|null} */ (document.getElementById(inputId));
+  const file = fileInput?.files?.[0];
+  if (!file) return { text: null, name: null };
+  const text = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result ?? ""));
+    r.onerror = () => reject(new Error("File read failed"));
+    r.readAsText(file);
+  });
+  return { text, name: file.name };
+}
+
+/**
+ * @param {string} shape
+ * @param {string} fileText
+ * @param {number} orientationDeg
+ * @param {string} xyOrigin
+ * @returns {{ x: number, y: number, z: number }[][]}
+ */
+function buildImportContoursFromFile(shape, fileText, orientationDeg, xyOrigin) {
+  const contours = parseVectorImportToContours(shape, fileText);
+  const oriented = orientationDeg !== 0 ? rotatePathsAroundOrigin(contours, orientationDeg) : contours;
+  return applyOriginToDxfContours(oriented, xyOrigin);
 }
 
 /**
@@ -1142,6 +1210,9 @@ function readInputsFromForm() {
   } else if (shape === ShapeType.DXF) {
     shapeParams.type = "dxf";
     shapeParams.dxfOrientation = toNumber(g("dxf-orientation")?.value) || 0;
+  } else if (shape === ShapeType.SVG) {
+    shapeParams.type = "svg";
+    shapeParams.svgOrientation = toNumber(g("svg-orientation")?.value) || 0;
   }
 
   const letterMode = shape === ShapeType.LETTERS
@@ -1259,7 +1330,7 @@ function readInputsFromForm() {
   const rampAngle = toNumber(g("ramp-angle").value);
 
   const plungeOutsideRaw = /** @type {HTMLInputElement} */ (g("plunge-outside"))?.value ?? "off";
-  const plungeOutside = isSimpleMode ? false : ((operation === OperationType.POCKET || operation === OperationType.FACING || shape === ShapeType.DXF) ? false : plungeOutsideRaw === "on");
+  const plungeOutside = isSimpleMode ? false : ((operation === OperationType.POCKET || operation === OperationType.FACING || isVectorImportShape(shape)) ? false : plungeOutsideRaw === "on");
 
   const facingModeRaw = (/** @type {HTMLSelectElement} */ (g("facing-mode")))?.value?.trim?.() ?? "";
   const facingMode = facingModeRaw === "within" ? "within" : "full";
@@ -1351,6 +1422,7 @@ function getParamsSnapshotReadOnly() {
   else if (shape === ShapeType.PATTERNED_HOLES) { sp.diameter = vm("patterned-holes-diameter"); sp.spacingX = vm("patterned-holes-spacing-x"); sp.spacingY = vm("patterned-holes-spacing-y"); sp.countX = Math.max(1, Math.floor(v("patterned-holes-count-x") || 1)); sp.countY = Math.max(1, Math.floor(v("patterned-holes-count-y") || 1)); }
   else if (shape === ShapeType.CIRCULAR_PATTERN_HOLES) { sp.count = Math.max(1, Math.floor(v("circular-pattern-holes-count") || 6)); sp.diameter = vm("circular-pattern-holes-diameter"); sp.circleDiameter = vm("circular-pattern-holes-circle-diameter"); sp.startAngle = Math.max(0, Math.min(360, v("circular-pattern-holes-start-angle") || 0)); sp.holeInCenter = el("circular-pattern-holes-center-hole")?.checked ?? false; sp.centerHoleDiameter = sp.holeInCenter ? vm("circular-pattern-holes-center-diameter") : 0; }
   else if (shape === ShapeType.DXF) { sp.type = "dxf"; sp.dxfOrientation = v("dxf-orientation") || 0; }
+  else if (shape === ShapeType.SVG) { sp.type = "svg"; sp.svgOrientation = v("svg-orientation") || 0; }
 
   const letterMode = shape === ShapeType.LETTERS ? (el("letter-mode")?.value || "outline") : "outline";
   const contourType = normalizeContourType(el("contour-type")?.value);
@@ -1419,7 +1491,7 @@ function getParamsSnapshotReadOnly() {
     originOffsetY: isSimple ? 0 : (vm("origin-offset-y") || 0),
   };
   const plungeRaw = el("plunge-outside")?.value ?? "off";
-  const plunge = isSimple ? false : ((operation === OperationType.POCKET || operation === OperationType.FACING || shape === ShapeType.DXF) ? false : plungeRaw === "on");
+  const plunge = isSimple ? false : ((operation === OperationType.POCKET || operation === OperationType.FACING || isVectorImportShape(shape)) ? false : plungeRaw === "on");
   const facing = (el("facing-mode")?.value?.trim?.() ?? "") === "within" ? "within" : "full";
   const facingDir = isSimple ? "x" : ((el("facing-direction")?.value?.trim?.() ?? "") === "y" ? "y" : "x");
   const facingFinishRaw = isSimple ? "off" : (el("facing-finish-mode")?.value?.trim?.() ?? "");
@@ -1431,10 +1503,11 @@ function getParamsSnapshotReadOnly() {
   const ramp = v("ramp-angle") || 3;
 
   const snap = { shape, operation, shapeParams: sp, letterMode, contourType, facingMode: facing, facingDirection: facingDir, facingFinishMode, facingEvenSpacing: facingEven, plungeOutside: plunge, cutParams: { ...cp, entryMethod: entry, rampAngleMax: ramp }, originParams: op, tabs };
-  if (shape === ShapeType.DXF) {
-    const f = el("dxf-file");
+  if (isVectorImportShape(shape)) {
+    const inputId = shape === ShapeType.SVG ? "svg-file" : "dxf-file";
+    const f = el(inputId);
     const file = f?.files?.[0];
-    snap.dxfFile = file ? { name: file.name, size: file.size, lastModified: file.lastModified } : null;
+    snap.importFile = file ? { name: file.name, size: file.size, lastModified: file.lastModified } : null;
   }
   return snap;
 }
@@ -1461,8 +1534,8 @@ function paramsSnapshotsEqual(a, b) {
     return true;
   }
   if (!objEq(a.shapeParams, b.shapeParams) || !objEq(a.cutParams, b.cutParams) || !objEq(a.originParams, b.originParams) || !objEq(a.tabs, b.tabs)) return false;
-  if (a.shape === ShapeType.DXF) {
-    const da = a.dxfFile, db = b.dxfFile;
+  if (isVectorImportShape(a.shape)) {
+    const da = a.importFile, db = b.importFile;
     if (!da !== !db) return false;
     if (da && db && (da.name !== db.name || da.size !== db.size || da.lastModified !== db.lastModified)) return false;
   }
@@ -1604,8 +1677,9 @@ function validateInputs(raw) {
       break;
     }
     case ShapeType.DXF:
+    case ShapeType.SVG:
       if (!raw.dxfContours || !Array.isArray(raw.dxfContours) || raw.dxfContours.length === 0) {
-        errors.push(t("error.dxfNoContours"));
+        errors.push(shape === ShapeType.SVG ? t("error.svgNoContours") : t("error.dxfNoContours"));
       }
       break;
     default:
@@ -1625,6 +1699,7 @@ function validateInputs(raw) {
     raw.shape !== ShapeType.COUNTERBORE_BOLT &&
     raw.shape !== ShapeType.THREAD_MILLING &&
     raw.shape !== ShapeType.DXF &&
+    raw.shape !== ShapeType.SVG &&
     isPocketOrInsideContour &&
     Number.isFinite(toolD) &&
     toolD > 0
@@ -3160,7 +3235,7 @@ function getResultShapePathsRaw(params) {
     return { paths, totalDepth, bottomZ };
   }
 
-  if (shape === ShapeType.DXF) {
+  if (isVectorImportShape(shape)) {
     const dxfContours = params.dxfContours;
     if (!dxfContours || dxfContours.length === 0) return null;
     if (operation === OperationType.POCKET) {
@@ -3465,8 +3540,8 @@ function generateToolpath(params) {
     return { moves, toolDiameter: letterMode === "outline" ? 0 : cutParams.toolDiameter };
   }
 
-  // DXF-contouren: contour (uitsnijden) of pocket (uitfrezen),zelfde logica als letters
-  if (shape === ShapeType.DXF) {
+  // Vectorimport (DXF/SVG): contour of pocket
+  if (isVectorImportShape(shape)) {
     const dxfContours = params.dxfContours;
     if (!dxfContours || dxfContours.length === 0) return { moves: [] };
     const entryMethod = effectiveEntryMethod(shape, params.contourType, params.letterMode, cutParams.entryMethod);
@@ -6034,11 +6109,12 @@ function getGcodeOperationLabel(params) {
       : t("form.operationPocket");
     return `${t("form.shapePatternedHoles")} - ${opLabel}`;
   }
-  if (shape === ShapeType.DXF) {
+  if (isVectorImportShape(shape)) {
     const opLabel = operation === OperationType.POCKET
       ? t("form.operationPocket")
       : (contourType === "engraving" ? t("form.contourEngraving") : t("form.operationContour"));
-    return `${t("form.shapeDxf")} - ${opLabel}`;
+    const shapeLabel = shape === ShapeType.SVG ? t("form.shapeSvg") : t("form.shapeDxf");
+    return `${shapeLabel} - ${opLabel}`;
   }
   if (shape === ShapeType.FACING || operation === OperationType.FACING) return t("form.operationFacing");
   let opLabel = "";
@@ -7200,8 +7276,9 @@ function getSuggestedGcodeFilename(raw) {
   if (raw.shape === ShapeType.LETTERS) {
     return `gcode_letters_${ts}.nc`;
   }
-  if (raw.shape === ShapeType.DXF) {
-    return `gcode_dxf_${raw.operation}_${ts}.nc`;
+  if (isVectorImportShape(raw.shape)) {
+    const prefix = raw.shape === ShapeType.SVG ? "svg" : "dxf";
+    return `gcode_${prefix}_${raw.operation}_${ts}.nc`;
   }
   if (raw.shape === ShapeType.THREAD_MILLING) {
     return `gcode_thread_milling_${raw.shapeParams?.threadMillType || ThreadMillType.INTERNAL}_${ts}.nc`;
@@ -7283,6 +7360,7 @@ const CHAIN_CAPTURE_FIELD_IDS = [
   "circular-pattern-holes-count", "circular-pattern-holes-diameter", "circular-pattern-holes-circle-diameter",
   "circular-pattern-holes-start-angle", "circular-pattern-holes-center-hole", "circular-pattern-holes-center-diameter",
   "dxf-orientation",
+  "svg-orientation",
   "facing-mode", "facing-direction", "facing-finish-mode", "facing-even-spacing",
   "contour-type", "tabs-enabled", "tab-interval", "tab-width", "tab-height",
   "tool-diameter", "total-depth", "multiple-depths", "stepdown", "stepover",
@@ -7517,27 +7595,14 @@ function createChainStepFromCurrentFormSync() {
   };
 }
 
-async function readDxfTextFromFileInput() {
-  const dxfFileInput = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-file"));
-  const file = dxfFileInput?.files?.[0];
-  if (!file) return { text: null, name: null };
-  const text = await new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result ?? ""));
-    r.onerror = () => reject(new Error("File read failed"));
-    r.readAsText(file);
-  });
-  return { text, name: file.name };
-}
-
 async function saveActiveChainStepFromForm() {
   const idx = getChainActiveStepIndex();
   if (idx < 0 || !chainJobSteps[idx]) return;
   chainJobSteps[idx].formState = captureFormStateForChain();
   const opCat = chainJobSteps[idx].formState.fields["operation-type"];
   const shape = resolveEffectiveShape(opCat, chainJobSteps[idx].formState.fields["shape"]);
-  if (shape === ShapeType.DXF) {
-    const { text, name } = await readDxfTextFromFileInput();
+  if (isVectorImportShape(shape)) {
+    const { text, name } = await readVectorImportTextFromFileInput(shape);
     if (text) {
       chainJobSteps[idx].dxfText = text;
       chainJobSteps[idx].dxfFileName = name;
@@ -7580,8 +7645,8 @@ async function addChainStepFromForm() {
   }
   const opCat = step.formState.fields["operation-type"];
   const shape = resolveEffectiveShape(opCat, step.formState.fields["shape"]);
-  if (shape === ShapeType.DXF) {
-    const { text, name } = await readDxfTextFromFileInput();
+  if (isVectorImportShape(shape)) {
+    const { text, name } = await readVectorImportTextFromFileInput(shape);
     if (text) {
       step.dxfText = text;
       step.dxfFileName = name;
@@ -7688,16 +7753,16 @@ async function prepareRawFromChainStep(step, baselineFields) {
   applyFormStateForChain(step.formState);
   let raw = readInputsFromForm();
   if (baselineFields) raw = applyChainBaselineToRaw(raw, baselineFields);
-  if (raw.shape === ShapeType.DXF) {
+  if (isVectorImportShape(raw.shape)) {
     if (!step.dxfText) {
-      throw new Error(t("error.dxfNoFile"));
+      throw new Error(raw.shape === ShapeType.SVG ? t("error.svgNoFile") : t("error.dxfNoFile"));
     }
-    const contours = parseDxfToContours(step.dxfText);
-    const dxfOrientation = Number(raw.shapeParams.dxfOrientation) || 0;
-    let dxfContours = dxfOrientation !== 0
-      ? rotatePathsAroundOrigin(contours, dxfOrientation)
-      : contours;
-    raw.dxfContours = applyOriginToDxfContours(dxfContours, raw.originParams.xyOrigin);
+    raw.dxfContours = buildImportContoursFromFile(
+      raw.shape,
+      step.dxfText,
+      getImportOrientationDeg(raw.shape, raw.shapeParams),
+      raw.originParams.xyOrigin
+    );
   }
   return raw;
 }
@@ -8501,6 +8566,7 @@ function setupUI() {
       [ShapeType.PATTERNED_HOLES]: ".shape-patterned-holes",
       [ShapeType.CIRCULAR_PATTERN_HOLES]: ".shape-circular-pattern-holes",
       [ShapeType.DXF]: ".shape-dxf",
+      [ShapeType.SVG]: ".shape-svg",
     };
     const selector = map[selected];
     if (selector) {
@@ -8532,7 +8598,7 @@ function setupUI() {
         if (contourTypeSelect) contourTypeSelect.value = "inside";
       }
       updateContourTypeVisibility();
-    } else if (selected === ShapeType.DXF) {
+    } else if (isVectorImportShape(selected)) {
       if (operationRow) operationRow.classList.remove("hidden");
       contourOnlyElems.forEach((el) => {
         el.classList.remove("hidden");
@@ -8548,7 +8614,7 @@ function setupUI() {
         plungeOutsideInput.value = "off";
         plungeOutsideButtons.forEach((b) => b.classList.toggle("entry-method-btn--active", b.dataset.plungeOutside === "off"));
       }
-      if (previous !== ShapeType.DXF) {
+      if (!isVectorImportShape(previous)) {
         const u = getDisplayUnit();
         const toolEl = /** @type {HTMLInputElement | null} */ (document.getElementById("tool-diameter"));
         if (toolEl) toolEl.value = String(fromMm(DXF_ENGRAVING_TOOL_DIAMETER_MM, u));
@@ -8589,14 +8655,14 @@ function setupUI() {
       if (pocketOpt) pocketOpt.disabled = false;
       updateContourTypeVisibility();
     }
-    if (selected !== ShapeType.DXF) {
+    if (!isVectorImportShape(selected)) {
       const pocketOpt = operationSelect?.querySelector('option[value="pocket"]');
       if (pocketOpt) pocketOpt.disabled = false;
     }
 
     // Standaard XY-origin per vorm
     if (xyOriginSelect) {
-      if (selected === ShapeType.SQUARE || selected === ShapeType.RECTANGLE || selected === ShapeType.FACING || selected === ShapeType.LETTERS || selected === ShapeType.PATTERNED_HOLES || selected === ShapeType.DXF) {
+      if (selected === ShapeType.SQUARE || selected === ShapeType.RECTANGLE || selected === ShapeType.FACING || selected === ShapeType.LETTERS || selected === ShapeType.PATTERNED_HOLES || isVectorImportShape(selected)) {
         xyOriginSelect.value = XYOrigin.BOTTOM_LEFT;
       } else if (selected === ShapeType.CIRCLE || selected === ShapeType.ELLIPSE || selected === ShapeType.HEXAGON || selected === ShapeType.COUNTERBORE_BOLT || selected === ShapeType.THREAD_MILLING || selected === ShapeType.CIRCULAR_PATTERN_HOLES) {
         xyOriginSelect.value = XYOrigin.CENTER;
@@ -8684,6 +8750,14 @@ function setupUI() {
     dxfFileInput.addEventListener("change", () => {
       const file = dxfFileInput.files && dxfFileInput.files[0];
       dxfFileNameEl.textContent = file ? file.name : "";
+    });
+  }
+  const svgFileInput = document.getElementById("svg-file");
+  const svgFileNameEl = document.getElementById("svg-file-name");
+  if (svgFileInput && svgFileNameEl) {
+    svgFileInput.addEventListener("change", () => {
+      const file = svgFileInput.files && svgFileInput.files[0];
+      svgFileNameEl.textContent = file ? file.name : "";
     });
   }
 
@@ -8979,9 +9053,9 @@ function setupUI() {
     });
   }
   const contourTypeSelectForToolD = /** @type {HTMLSelectElement | null} */ (document.getElementById("contour-type"));
-  function applyDxfEngravingToolDefault() {
+  function applyVectorImportEngravingToolDefault() {
     const shape = getEffectiveShape();
-    if (shape !== ShapeType.DXF) return;
+    if (!isVectorImportShape(shape)) return;
     const contourType = normalizeContourType(contourTypeSelectForToolD?.value);
     if (contourType !== "engraving") return;
     const u = getDisplayUnit();
@@ -8990,7 +9064,7 @@ function setupUI() {
   }
   if (contourTypeSelectForToolD) {
     contourTypeSelectForToolD.addEventListener("change", () => {
-      applyDxfEngravingToolDefault();
+      applyVectorImportEngravingToolDefault();
       updateToolDiameterVisibility();
     });
   }
@@ -9006,7 +9080,7 @@ function setupUI() {
     const outsideOpt = document.getElementById("contour-type-outside");
     const engravingOpt = document.getElementById("contour-type-engraving");
     const isCircularPatternHoles = shape === ShapeType.CIRCULAR_PATTERN_HOLES;
-    const isDxf = shape === ShapeType.DXF;
+    const isVectorImport = isVectorImportShape(shape);
     if (outsideOpt) {
       if (showContour && isCircularPatternHoles) {
         outsideOpt.setAttribute("hidden", "");
@@ -9020,7 +9094,7 @@ function setupUI() {
       }
     }
     if (engravingOpt) {
-      if (showContour && isDxf) {
+      if (showContour && isVectorImport) {
         engravingOpt.removeAttribute("hidden");
         engravingOpt.disabled = false;
       } else {
@@ -9033,7 +9107,7 @@ function setupUI() {
     }
 
     const contourOnlyElems = document.querySelectorAll(".contour-only");
-    const isDxfEngraving = isDxf && showContour && contourTypeSelect?.value === "engraving";
+    const isVectorImportEngraving = isVectorImport && showContour && contourTypeSelect?.value === "engraving";
     const isCircularPatternHolesContour = showContour && shape === ShapeType.CIRCULAR_PATTERN_HOLES;
     if (isCircularPatternHolesContour && plungeOutsideInput) {
       plungeOutsideInput.value = "off";
@@ -9042,9 +9116,9 @@ function setupUI() {
     contourOnlyElems.forEach((el) => {
       if (showContour) {
         el.classList.remove("hidden");
-        if (el.classList.contains("plunge-outside-no-dxf") && isDxf) el.classList.add("hidden");
+        if (el.classList.contains("plunge-outside-no-dxf") && isVectorImport) el.classList.add("hidden");
         if (el.classList.contains("plunge-outside-no-circular-pattern-holes") && isCircularPatternHolesContour) el.classList.add("hidden");
-        if (el.id === "tab-settings" && isDxfEngraving) el.classList.add("hidden");
+        if (el.id === "tab-settings" && isVectorImportEngraving) el.classList.add("hidden");
       } else {
         el.classList.add("hidden");
       }
@@ -9078,7 +9152,7 @@ function setupUI() {
     const showPocket = effectiveOpForPocket === OperationType.POCKET;
     const showFinishingPass = (effectiveOpForPocket === OperationType.POCKET || effectiveOpForPocket === OperationType.CONTOUR)
       && shape !== ShapeType.THREAD_MILLING
-      && !isDxfEngraving;
+      && !isVectorImportEngraving;
     document.querySelectorAll(".pocket-only").forEach((el) => {
       el.classList.toggle("hidden", !showPocket);
     });
@@ -9106,7 +9180,7 @@ function setupUI() {
     }
 
     // Bij wisselen naar niet-contour of DXF-gravering: tabs uitzetten en parameters verbergen; insteken naast part uit
-    if (!showContour || isDxfEngraving) {
+    if (!showContour || isVectorImportEngraving) {
       if (tabsEnabledCheckbox) {
         tabsEnabledCheckbox.checked = false;
         updateTabParamsVisibility();
@@ -9918,6 +9992,8 @@ function setupUI() {
     });
   const dxfFileEl = document.getElementById("dxf-file");
   if (dxfFileEl) dxfFileEl.addEventListener("change", updateRegenerateIndicator);
+  const svgFileEl = document.getElementById("svg-file");
+  if (svgFileEl) svgFileEl.addEventListener("change", updateRegenerateIndicator);
 
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -10002,11 +10078,14 @@ function setupUI() {
       }
 
       const raw = readInputsFromForm();
-      if (raw.shape === ShapeType.DXF) {
-        const dxfFileInput = document.getElementById("dxf-file");
-        const file = dxfFileInput && dxfFileInput.files && dxfFileInput.files[0];
+      if (isVectorImportShape(raw.shape)) {
+        const inputId = raw.shape === ShapeType.SVG ? "svg-file" : "dxf-file";
+        const fileInput = document.getElementById(inputId);
+        const file = fileInput && fileInput.files && fileInput.files[0];
         if (!file) {
-          if (errorMessage) errorMessage.textContent = t("error.dxfNoFile");
+          if (errorMessage) {
+            errorMessage.textContent = raw.shape === ShapeType.SVG ? t("error.svgNoFile") : t("error.dxfNoFile");
+          }
           return;
         }
         try {
@@ -10016,14 +10095,14 @@ function setupUI() {
             r.onerror = () => reject(new Error("File read failed"));
             r.readAsText(file);
           });
-          const contours = parseDxfToContours(text);
-          const dxfOrientation = Number(raw.shapeParams.dxfOrientation) || 0;
-          let dxfContours = dxfOrientation !== 0
-            ? rotatePathsAroundOrigin(contours, dxfOrientation)
-            : contours;
-          raw.dxfContours = applyOriginToDxfContours(dxfContours, raw.originParams.xyOrigin);
-        } catch (dxfErr) {
-          const msg = dxfErr instanceof Error ? dxfErr.message : String(dxfErr);
+          raw.dxfContours = buildImportContoursFromFile(
+            raw.shape,
+            text,
+            getImportOrientationDeg(raw.shape, raw.shapeParams),
+            raw.originParams.xyOrigin
+          );
+        } catch (importErr) {
+          const msg = importErr instanceof Error ? importErr.message : String(importErr);
           if (errorMessage) errorMessage.textContent = msg;
           return;
         }
