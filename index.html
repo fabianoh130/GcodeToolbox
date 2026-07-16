@@ -853,6 +853,59 @@
               </div>
               <input type="hidden" id="entry-method" name="entry-method" value="plunge" />
             </div>
+            <div class="field-row" id="entry-speed-row">
+              <label for="entry-speed" id="entry-speed-label" data-i18n="form.plungeSpeed">Plunge speed</label>
+              <div id="entry-speed-input-wrapper" class="input-with-stepper" data-step="10" data-min="5" data-max="200">
+                <div class="stepover-input-group">
+                  <div class="stepover-unit-toggle entry-speed-unit-toggle" role="group" data-i18n-aria-label="form.entrySpeedUnit">
+                    <label class="toggle-option">
+                      <input type="radio" name="entry-speed-unit" value="percent" checked />
+                      <span>%</span>
+                    </label>
+                    <label class="toggle-option">
+                      <input type="radio" name="entry-speed-unit" value="feed" />
+                      <span>F</span>
+                    </label>
+                  </div>
+                  <input type="number" id="entry-speed" min="5" max="200" step="any" required value="33" data-i18n-title="form.entrySpeedTitle" />
+                </div>
+                <div class="stepper-buttons">
+                  <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
+                  <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
+                </div>
+              </div>
+              <span id="entry-speed-hint" class="field-hint" aria-live="polite"></span>
+            </div>
+            <div class="field-row plunge-pecking-only" id="plunge-pecking-enabled-row">
+              <span class="field-label" data-i18n="form.plungePecking">Pecking</span>
+              <label class="toggle-btn-label">
+                <input type="checkbox" id="plunge-pecking-enabled" class="toggle-btn-input" />
+                <span class="toggle-btn">
+                  <span class="toggle-btn-no" data-i18n="form.no">Nee</span>
+                  <span class="toggle-btn-yes" data-i18n="form.yes">Ja</span>
+                </span>
+              </label>
+            </div>
+            <div id="plunge-peck-depth-row" class="field-row plunge-pecking-only hidden">
+              <label for="plunge-peck-depth" data-i18n="form.plungePeckDepth">Peck depth (mm)</label>
+              <div class="input-with-stepper" data-step="0.1" data-min="0.1">
+                <input type="number" id="plunge-peck-depth" min="0.1" step="0.1" value="1" data-i18n-title="form.plungePeckDepthTitle" />
+                <div class="stepper-buttons">
+                  <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
+                  <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
+                </div>
+              </div>
+            </div>
+            <div id="plunge-peck-retract-row" class="field-row plunge-pecking-only hidden">
+              <label for="plunge-peck-retract" data-i18n="form.plungePeckRetract">Peck retract (mm)</label>
+              <div class="input-with-stepper" data-step="0.1" data-min="0.1">
+                <input type="number" id="plunge-peck-retract" min="0.1" step="0.1" value="1" data-i18n-title="form.plungePeckRetractTitle" />
+                <div class="stepper-buttons">
+                  <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
+                  <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
+                </div>
+              </div>
+            </div>
             <div id="ramp-settings" class="ramp-settings hidden">
               <div class="field-row">
                 <label for="ramp-angle" data-i18n="form.rampAngle">Max. ramp-hoek (°)</label>

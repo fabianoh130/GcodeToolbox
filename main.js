@@ -215,11 +215,72 @@ const EntryMethod = {
 };
 
 /**
- * @typedef {{ x: number, y: number, z: number, type: 'rapid'|'cut', feedOverridePct?: number }} ToolpathMove
+ * @typedef {{ x: number, y: number, z: number, type: 'rapid'|'cut'|'arc', feedrateMmMin?: number, i?: number, j?: number, clockwise?: boolean }} ToolpathMove
  * @typedef {{ moves: ToolpathMove[], resultPaths?: {x:number,y:number,z:number}[][], resultTotalDepth?: number, resultBottomZ?: number, resultContourInside?: boolean, resultPathsWithDepth?: {path:{x:number,y:number,z:number}[], topZ:number, bottomZ:number}[], resultBounds?: {minX:number,maxX:number,minY:number,maxY:number}, toolDiameter?: number }} Toolpath
  */
 
 const DEFAULT_SAFE_Z = 10; // mm, standaard veilige hoogte (overschrijfbaar via formulier)
+const DEFAULT_ENTRY_SPEED_PCT = 33; // standaard plunge/ramp als % van feedrate
+const DEFAULT_PLUNGE_PECK_DEPTH_MM = 1;
+const DEFAULT_PLUNGE_PECK_RETRACT_MM = 1;
+
+/** @type {"percent"|"feed"} */
+let entrySpeedUnitMemory = "percent";
+
+/**
+ * Past min/max/step van het entry-speed veld aan zonder de waarde te wijzigen.
+ * @param {"percent"|"feed"} unit
+ */
+function syncEntrySpeedInputConstraints(unit) {
+  const entrySpeedInput = /** @type {HTMLInputElement | null} */ (document.getElementById("entry-speed"));
+  const entrySpeedWrapper = document.getElementById("entry-speed-input-wrapper");
+  if (!entrySpeedInput || !entrySpeedWrapper) return;
+  const displayUnit = getDisplayUnit();
+  if (unit === "feed") {
+    entrySpeedInput.min = "1";
+    entrySpeedInput.removeAttribute("max");
+    entrySpeedInput.step = "any";
+    entrySpeedWrapper.setAttribute("data-step", displayUnit === "inch" ? "1" : "50");
+    entrySpeedWrapper.setAttribute("data-min", "1");
+    entrySpeedWrapper.removeAttribute("data-max");
+  } else {
+    entrySpeedInput.min = "5";
+    entrySpeedInput.max = "200";
+    entrySpeedInput.step = "any";
+    entrySpeedWrapper.setAttribute("data-step", "10");
+    entrySpeedWrapper.setAttribute("data-min", "5");
+    entrySpeedWrapper.setAttribute("data-max", "200");
+  }
+}
+
+/**
+ * Zet entry-speed waarde om bij wisselen tussen % en absolute feed.
+ * @param {"percent"|"feed"} fromUnit
+ * @param {"percent"|"feed"} toUnit
+ */
+function convertEntrySpeedBetweenUnits(fromUnit, toUnit) {
+  if (fromUnit === toUnit) return;
+  const entrySpeedInput = /** @type {HTMLInputElement | null} */ (document.getElementById("entry-speed"));
+  const feedrateInput = /** @type {HTMLInputElement | null} */ (document.getElementById("feedrate"));
+  if (!entrySpeedInput || !feedrateInput) return;
+  const displayUnit = getDisplayUnit();
+  const feedDisplay = toNumber(feedrateInput.value);
+  const feedMm = toMm(feedDisplay, displayUnit);
+  const currentVal = toNumber(entrySpeedInput.value);
+  if (toUnit === "feed") {
+    const pct = Number.isFinite(currentVal) ? currentVal : DEFAULT_ENTRY_SPEED_PCT;
+    const feedAbs = Number.isFinite(feedMm) && feedMm > 0 ? (pct / 100) * feedDisplay : feedDisplay;
+    entrySpeedInput.value = String(displayUnit === "inch"
+      ? Math.round(feedAbs * 100) / 100
+      : Math.round(feedAbs));
+  } else {
+    const entryFeedMm = toMm(currentVal, displayUnit);
+    const pct = Number.isFinite(feedMm) && feedMm > 0 && Number.isFinite(entryFeedMm)
+      ? Math.round((entryFeedMm / feedMm) * 100)
+      : DEFAULT_ENTRY_SPEED_PCT;
+    entrySpeedInput.value = String(Math.min(200, Math.max(5, pct)));
+  }
+}
 const GCODE_TOOLBOX_URL = "https://fabianoh130.github.io/GcodeToolbox/";
 
 /** Conversie display-eenheid naar mm (intern). */
@@ -404,6 +465,37 @@ function isPartialDecimalInput(value) {
 
 function degToRad(deg) {
   return (deg * Math.PI) / 180;
+}
+
+/**
+ * Berekent plunge/ramp-feedrate in mm/min (afgerond op geheel getal).
+ * @param {{ feedrate: number, entrySpeedUnit?: string, entrySpeedValue?: number }} cutParams
+ * @returns {number}
+ */
+function computeEntryFeedrateMm(cutParams) {
+  const feedrate = cutParams.feedrate;
+  if (!Number.isFinite(feedrate) || feedrate <= 0) return feedrate;
+  const unit = cutParams.entrySpeedUnit === "feed" ? "feed" : "percent";
+  const value = cutParams.entrySpeedValue;
+  let entryFeedMm;
+  if (unit === "percent") {
+    const pct = Number.isFinite(value) ? value : DEFAULT_ENTRY_SPEED_PCT;
+    const clampedPct = Math.max(5, Math.min(200, pct));
+    entryFeedMm = feedrate * (clampedPct / 100);
+  } else {
+    entryFeedMm = Number.isFinite(value) ? value : feedrate * (DEFAULT_ENTRY_SPEED_PCT / 100);
+  }
+  return Math.max(1, Math.round(entryFeedMm));
+}
+
+/**
+ * @param {number} feedMm
+ * @param {boolean} useInch
+ * @returns {number}
+ */
+function formatFeedrateForGcode(feedMm, useInch) {
+  if (!Number.isFinite(feedMm) || feedMm <= 0) return 0;
+  return Math.round(useInch ? feedMm / MM_PER_INCH : feedMm);
 }
 
 function distance2D(a, b) {
@@ -1221,6 +1313,23 @@ function readInputsFromForm() {
     ? toMm(toNumber(g("finishing-pass-overlap")?.value), displayUnit)
     : 0;
 
+  const entrySpeedUnit = isSimpleMode
+    ? "percent"
+    : (/** @type {HTMLInputElement} */ (document.querySelector('input[name="entry-speed-unit"]:checked'))?.value ?? "percent");
+  const entrySpeedRaw = isSimpleMode ? DEFAULT_ENTRY_SPEED_PCT : toNumber(g("entry-speed")?.value);
+  let entrySpeedValue;
+  if (entrySpeedUnit === "percent") {
+    entrySpeedValue = Number.isFinite(entrySpeedRaw) ? entrySpeedRaw : DEFAULT_ENTRY_SPEED_PCT;
+  } else {
+    entrySpeedValue = Number.isFinite(entrySpeedRaw) ? toMm(entrySpeedRaw, displayUnit) : NaN;
+  }
+
+  const plungePeckingEnabled = isSimpleMode
+    ? false
+    : (/** @type {HTMLInputElement} */ (g("plunge-pecking-enabled"))?.checked ?? false);
+  const plungePeckDepthRaw = toMm(toNumber(g("plunge-peck-depth")?.value), displayUnit);
+  const plungePeckRetractRaw = toMm(toNumber(g("plunge-peck-retract")?.value), displayUnit);
+
   const cutParams = {
     toolDiameter,
     totalDepth,
@@ -1240,7 +1349,17 @@ function readInputsFromForm() {
     finishingPassDistance: Number.isFinite(finishingPassDistance) && finishingPassDistance >= 0 ? finishingPassDistance : 0,
     finishingPassSpeedOverridePct: Number.isFinite(finishingPassSpeedOverridePct) ? Math.max(5, Math.min(200, finishingPassSpeedOverridePct)) : 100,
     finishingPassOverlap: Number.isFinite(finishingPassOverlap) && finishingPassOverlap >= 0 ? finishingPassOverlap : 0,
+    entrySpeedUnit,
+    entrySpeedValue,
+    plungePeckingEnabled,
+    plungePeckDepthMm: Number.isFinite(plungePeckDepthRaw) && plungePeckDepthRaw > 0
+      ? plungePeckDepthRaw
+      : DEFAULT_PLUNGE_PECK_DEPTH_MM,
+    plungePeckRetractMm: Number.isFinite(plungePeckRetractRaw) && plungePeckRetractRaw > 0
+      ? plungePeckRetractRaw
+      : DEFAULT_PLUNGE_PECK_RETRACT_MM,
   };
+  cutParams.entryFeedrateMm = computeEntryFeedrateMm(cutParams);
 
   const originParams = {
     xyOrigin: /** @type {HTMLSelectElement} */ (g("xy-origin")).value,
@@ -1388,6 +1507,19 @@ function getParamsSnapshotReadOnly() {
   const finPassSpeedOverridePct = finPassEnabled ? (v("finishing-pass-speed-override") || 100) : 100;
   const finPassOverlap = finPassEnabled ? (vm("finishing-pass-overlap") || 0) : 0;
 
+  const entrySpeedUnit = isSimple ? "percent" : (document.querySelector('input[name="entry-speed-unit"]:checked')?.value ?? "percent");
+  const entrySpeedRaw = isSimple ? DEFAULT_ENTRY_SPEED_PCT : v("entry-speed");
+  let entrySpeedValue;
+  if (entrySpeedUnit === "percent") {
+    entrySpeedValue = Number.isFinite(entrySpeedRaw) ? entrySpeedRaw : DEFAULT_ENTRY_SPEED_PCT;
+  } else {
+    entrySpeedValue = Number.isFinite(entrySpeedRaw) ? vm("entry-speed") : NaN;
+  }
+
+  const plungePeckingEnabled = isSimple ? false : (el("plunge-pecking-enabled")?.checked ?? false);
+  const plungePeckDepthRaw = vm("plunge-peck-depth");
+  const plungePeckRetractRaw = vm("plunge-peck-retract");
+
   const cp = {
     toolDiameter: toolD,
     totalDepth: totalD,
@@ -1407,7 +1539,17 @@ function getParamsSnapshotReadOnly() {
     finishingPassDistance: Number.isFinite(finPassDist) && finPassDist >= 0 ? finPassDist : 0,
     finishingPassSpeedOverridePct: Number.isFinite(finPassSpeedOverridePct) ? Math.max(5, Math.min(200, finPassSpeedOverridePct)) : 100,
     finishingPassOverlap: Number.isFinite(finPassOverlap) && finPassOverlap >= 0 ? finPassOverlap : 0,
+    entrySpeedUnit,
+    entrySpeedValue,
+    plungePeckingEnabled,
+    plungePeckDepthMm: Number.isFinite(plungePeckDepthRaw) && plungePeckDepthRaw > 0
+      ? plungePeckDepthRaw
+      : DEFAULT_PLUNGE_PECK_DEPTH_MM,
+    plungePeckRetractMm: Number.isFinite(plungePeckRetractRaw) && plungePeckRetractRaw > 0
+      ? plungePeckRetractRaw
+      : DEFAULT_PLUNGE_PECK_RETRACT_MM,
   };
+  cp.entryFeedrateMm = computeEntryFeedrateMm(cp);
   const ss = v("spindle-speed");
   if (cp.spindleSpeedEnabled && Number.isFinite(ss) && ss > 0) cp.spindleSpeed = ss;
 
@@ -1524,6 +1666,28 @@ function validateInputs(raw) {
 
   if (!isEngravingContourMode(raw.shape, raw.contourType, raw.letterMode) && raw.cutParams.entryMethod === EntryMethod.RAMP) {
     assertPositive(raw.cutParams.rampAngleMax, "field.rampAngle");
+  }
+
+  const hideEntrySettings = isEngravingContourMode(raw.shape, raw.contourType, raw.letterMode)
+    || raw.shape === ShapeType.THREAD_MILLING;
+  if (!hideEntrySettings) {
+    const entryUnit = raw.cutParams.entrySpeedUnit === "feed" ? "feed" : "percent";
+    if (entryUnit === "percent") {
+      const pct = raw.cutParams.entrySpeedValue;
+      if (!Number.isFinite(pct) || pct < 5 || pct > 200) {
+        errors.push(t("error.entrySpeedPctRange"));
+      }
+    } else if (!Number.isFinite(raw.cutParams.entrySpeedValue) || raw.cutParams.entrySpeedValue <= 0) {
+      errors.push(t("error.entrySpeedFeedRequired"));
+    }
+    if (raw.cutParams.plungePeckingEnabled) {
+      if (!Number.isFinite(cp.plungePeckDepthMm) || cp.plungePeckDepthMm <= 0) {
+        errors.push(t("error.plungePeckDepthRequired"));
+      }
+      if (!Number.isFinite(cp.plungePeckRetractMm) || cp.plungePeckRetractMm <= 0) {
+        errors.push(t("error.plungePeckRetractRequired"));
+      }
+    }
   }
 
 
@@ -4371,9 +4535,12 @@ function generateToolpath(params) {
       ? Math.max(5, Math.min(200, cutParams.finishingPassSpeedOverridePct))
       : 100;
     if (overridePct === 100) return;
+    const baseFeed = cutParams.feedrate;
+    if (!Number.isFinite(baseFeed) || baseFeed <= 0) return;
+    const finFeedMm = Math.max(1, Math.round(baseFeed * overridePct / 100));
     for (let i = Math.max(0, startIdx); i < moves.length; i++) {
       if (moves[i].type === "cut") {
-        moves[i].feedOverridePct = overridePct;
+        moves[i].feedrateMmMin = finFeedMm;
       }
     }
   }
@@ -4833,6 +5000,51 @@ function addLayerForPath(
 ) {
   if (!path || path.length === 0) return;
 
+  const entryFeedMm = computeEntryFeedrateMm(cutParams);
+  const baseFeedMm = Math.round(cutParams.feedrate || 0);
+  /** @param {number} x @param {number} y @param {number} z */
+  function pushEntryCut(x, y, z) {
+    const m = { x, y, z, type: "cut" };
+    if (Number.isFinite(entryFeedMm) && entryFeedMm > 0 && entryFeedMm !== baseFeedMm) {
+      m.feedrateMmMin = entryFeedMm;
+    }
+    moves.push(m);
+  }
+  /** @param {number} x @param {number} y @param {number} z */
+  function pushContourCut(x, y, z) {
+    moves.push({ x, y, z, type: "cut" });
+  }
+
+  const plungePeckingActive = !!cutParams.plungePeckingEnabled && entryMethod === EntryMethod.PLUNGE;
+  const plungePeckDepthMm = Number.isFinite(cutParams.plungePeckDepthMm) && cutParams.plungePeckDepthMm > 0
+    ? cutParams.plungePeckDepthMm
+    : DEFAULT_PLUNGE_PECK_DEPTH_MM;
+  const plungePeckRetractMm = Number.isFinite(cutParams.plungePeckRetractMm) && cutParams.plungePeckRetractMm > 0
+    ? cutParams.plungePeckRetractMm
+    : DEFAULT_PLUNGE_PECK_RETRACT_MM;
+
+  /** @param {number} x @param {number} y @param {number} zFrom @param {number} zTo */
+  function pushVerticalPlunge(x, y, zFrom, zTo) {
+    if (Math.abs(zFrom - zTo) < 1e-6) return;
+    if (!plungePeckingActive) {
+      pushEntryCut(x, y, zTo);
+      return;
+    }
+    let currentZ = zFrom;
+    const goingDeeper = zTo < currentZ - 1e-6;
+    while (true) {
+      const remaining = goingDeeper ? currentZ - zTo : zTo - currentZ;
+      const step = Math.min(plungePeckDepthMm, remaining);
+      const nextZ = goingDeeper ? currentZ - step : currentZ + step;
+      pushEntryCut(x, y, nextZ);
+      currentZ = nextZ;
+      if (Math.abs(currentZ - zTo) < 1e-6) break;
+      const retractZ = goingDeeper ? currentZ + plungePeckRetractMm : currentZ - plungePeckRetractMm;
+      pushEntryCut(x, y, retractZ);
+      moves.push({ x, y, z: currentZ, type: "rapid" });
+    }
+  }
+
   const start = { x: path[0].x, y: path[0].y };
   const leadInAbove = Math.max(0, cutParams.leadInAboveMm ?? 2);
 
@@ -4846,8 +5058,8 @@ function addLayerForPath(
     if (safeZ > leadInAbove) {
       moves.push({ x: start.x, y: start.y, z: leadInAbove, type: "rapid" });
     }
-    moves.push({ x: start.x, y: start.y, z: 0, type: "cut" });
-    moves.push({ x: start.x, y: start.y, z: depthZ, type: "cut" });
+    pushEntryCut(start.x, start.y, 0);
+    pushVerticalPlunge(start.x, start.y, 0, depthZ);
     return;
   }
 
@@ -4856,10 +5068,10 @@ function addLayerForPath(
     const last = moves[moves.length - 1];
     // Bij facing: tool blijft op diepte, direct cut naar start van volgende strip (geen retract)
     if (keepToolDownBetweenPaths && last && Math.abs(last.z - depthZ) < 1e-6) {
-      moves.push({ x: start.x, y: start.y, z: depthZ, type: "cut" });
+      pushContourCut(start.x, start.y, depthZ);
       for (let i = 1; i < path.length; i++) {
         const p = path[i];
-        moves.push({ x: p.x, y: p.y, z: depthZ, type: "cut" });
+        pushContourCut(p.x, p.y, depthZ);
       }
       return;
     }
@@ -4915,7 +5127,7 @@ function addLayerForPath(
           const z = currentZ + deltaZPerStep * (step + 1);
           const x = cx + R * Math.cos(angle);
           const y = cy + R * Math.sin(angle);
-          moves.push({ x, y, z, type: "cut" });
+          pushEntryCut(x, y, z);
         }
         currentZ = isLastSegment ? targetZ : segmentZ;
         if (currentZ <= targetZ + 1e-6) break;
@@ -4923,7 +5135,7 @@ function addLayerForPath(
       const helixEndX = cx + R * Math.cos(((angle % twoPi) + twoPi) % twoPi);
       const helixEndY = cy + R * Math.sin(((angle % twoPi) + twoPi) % twoPi);
       if (distance2D({ x: helixEndX, y: helixEndY }, start) > 1e-6) {
-        moves.push({ x: start.x, y: start.y, z: depthZ, type: "cut" });
+        pushEntryCut(start.x, start.y, depthZ);
       }
     } else if (entryMethod === EntryMethod.RAMP && !useHelixRamp) {
       // Contour ramp (pad-gebaseerd): ramp langs het pad,zelfde logica als eerste contour
@@ -4948,12 +5160,12 @@ function addLayerForPath(
             if (dist + segLen <= requiredPathLength) {
               dist += segLen;
               const z = rampStartZ + (depthZ - rampStartZ) * (dist / requiredPathLength);
-              moves.push({ x: b.x, y: b.y, z, type: "cut" });
+              pushEntryCut(b.x, b.y, z);
             } else {
               const remaining = requiredPathLength - dist;
               const t = remaining / segLen;
               rampEndPoint = { x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) };
-              moves.push({ x: rampEndPoint.x, y: rampEndPoint.y, z: depthZ, type: "cut" });
+              pushEntryCut(rampEndPoint.x, rampEndPoint.y, depthZ);
               rampEndSeg = (i + 1) % n;
               break rampLoop;
             }
@@ -4969,12 +5181,11 @@ function addLayerForPath(
           for (const s of sListFirst) {
             if (s <= sRampEnd + eps) continue;
             const t = segLenFirst > 1e-12 ? (s - sRampEnd) / segLenFirst : 0;
-            moves.push({
-              x: rampEndPoint.x + t * (path[rampEndSeg].x - rampEndPoint.x),
-              y: rampEndPoint.y + t * (path[rampEndSeg].y - rampEndPoint.y),
-              z: getZForTabProfile(s, depthZ, tabConfig),
-              type: "cut",
-            });
+            pushContourCut(
+              rampEndPoint.x + t * (path[rampEndSeg].x - rampEndPoint.x),
+              rampEndPoint.y + t * (path[rampEndSeg].y - rampEndPoint.y),
+              getZForTabProfile(s, depthZ, tabConfig)
+            );
           }
           for (let k = 1; k < n; k++) {
             const idx = (rampEndSeg + k) % n;
@@ -4989,12 +5200,11 @@ function addLayerForPath(
             const segLen = sEnd - sStart;
             for (const s of sList) {
               const t = segLen > 1e-12 ? (s - sStart) / segLen : 0;
-              moves.push({
-                x: p0.x + t * (p1.x - p0.x),
-                y: p0.y + t * (p1.y - p0.y),
-                z: getZForTabProfile(s, depthZ, tabConfig),
-                type: "cut",
-              });
+              pushContourCut(
+                p0.x + t * (p1.x - p0.x),
+                p0.y + t * (p1.y - p0.y),
+                getZForTabProfile(s, depthZ, tabConfig)
+              );
             }
           }
           const sListLast = getTabBoundarySInSegment(tabConfig.cumulative[prevIdx], sRampEnd, tabConfig);
@@ -5002,28 +5212,27 @@ function addLayerForPath(
           for (const s of sListLast) {
             if (s >= sRampEnd - eps) continue;
             const t = segLenLast > 1e-12 ? (s - tabConfig.cumulative[prevIdx]) / segLenLast : 0;
-            moves.push({
-              x: path[prevIdx].x + t * (rampEndPoint.x - path[prevIdx].x),
-              y: path[prevIdx].y + t * (rampEndPoint.y - path[prevIdx].y),
-              z: getZForTabProfile(s, depthZ, tabConfig),
-              type: "cut",
-            });
+            pushContourCut(
+              path[prevIdx].x + t * (rampEndPoint.x - path[prevIdx].x),
+              path[prevIdx].y + t * (rampEndPoint.y - path[prevIdx].y),
+              getZForTabProfile(s, depthZ, tabConfig)
+            );
           }
-          moves.push({ x: rampEndPoint.x, y: rampEndPoint.y, z: getZForTabProfile(sRampEnd, depthZ, tabConfig), type: "cut" });
+          pushContourCut(rampEndPoint.x, rampEndPoint.y, getZForTabProfile(sRampEnd, depthZ, tabConfig));
         } else if (rampEndPoint !== null) {
           for (let k = 0; k < n; k++) {
             const idx = (rampEndSeg + k) % n;
             const z = tabConfig && tabConfig.enabled && depthZ < (tabConfig.tabZ + 1e-6) && tabConfig.cumulative && idx < tabConfig.cumulative.length
               ? getZForTabProfile(tabConfig.cumulative[idx], depthZ, tabConfig) : depthZ;
-            moves.push({ x: path[idx].x, y: path[idx].y, z, type: "cut" });
+            pushContourCut(path[idx].x, path[idx].y, z);
           }
           if (rampEndSeg !== 0 && tabConfig && tabConfig.enabled) {
             const s = tabConfig.cumulative[(rampEndSeg + n - 1) % n] + distance2D(path[(rampEndSeg + n - 1) % n], rampEndPoint);
-            moves.push({ x: rampEndPoint.x, y: rampEndPoint.y, z: getZForTabProfile(s, depthZ, tabConfig), type: "cut" });
+            pushContourCut(rampEndPoint.x, rampEndPoint.y, getZForTabProfile(s, depthZ, tabConfig));
           }
         }
       } else {
-        moves.push({ x: start.x, y: start.y, z: depthZ, type: "cut" });
+        pushEntryCut(start.x, start.y, depthZ);
       }
     } else {
       // Geen ramp: rapid naar start, verticale plunge
@@ -5031,7 +5240,8 @@ function addLayerForPath(
       if (safeZ > leadInAbove) {
         moves.push({ x: start.x, y: start.y, z: leadInAbove, type: "rapid" });
       }
-      moves.push({ x: start.x, y: start.y, z: depthZ, type: "cut" });
+      const plungeStartZ = safeZ > leadInAbove ? leadInAbove : safeZ;
+      pushVerticalPlunge(start.x, start.y, plungeStartZ, depthZ);
     }
 
     // Volledige ring op deze diepte aflopen (met tabs indien tabConfig) – alleen bij plunge (bij ramp al gedaan)
@@ -5049,7 +5259,7 @@ function addLayerForPath(
           const x = p0.x + t * (p1.x - p0.x);
           const y = p0.y + t * (p1.y - p0.y);
           const z = getZForTabProfile(s, depthZ, tabConfig);
-          moves.push({ x, y, z, type: "cut" });
+          pushContourCut(x, y, z);
         }
       }
     } else {
@@ -5060,7 +5270,7 @@ function addLayerForPath(
         if (useTabsHere && tabConfig.cumulative && i < tabConfig.cumulative.length) {
           z = getZForTabProfile(tabConfig.cumulative[i], depthZ, tabConfig);
         }
-        moves.push({ x: p.x, y: p.y, z, type: "cut" });
+        pushContourCut(p.x, p.y, z);
       }
     }
     }
@@ -5152,7 +5362,7 @@ function addLayerForPath(
     if (!nextPoint) {
       // Geen volgend punt bekend: val terug op rechte lijn.
       if (fromPoint.x !== startPoint.x || fromPoint.y !== startPoint.y) {
-        moves.push({ x: startPoint.x, y: startPoint.y, z: depth, type: "cut" });
+        pushEntryCut(startPoint.x, startPoint.y, depth);
       }
       return;
     }
@@ -5163,7 +5373,7 @@ function addLayerForPath(
     if (segLen < 1e-9) {
       // Te kort om een nette curve te maken → rechte lijn.
       if (fromPoint.x !== startPoint.x || fromPoint.y !== startPoint.y) {
-        moves.push({ x: startPoint.x, y: startPoint.y, z: depth, type: "cut" });
+        pushEntryCut(startPoint.x, startPoint.y, depth);
       }
       return;
     }
@@ -5216,7 +5426,7 @@ function addLayerForPath(
         omt * omt * fromPoint.y +
         2 * omt * t * cy +
         t * t * startPoint.y;
-      moves.push({ x: bx, y: by, z: depth, type: "cut" });
+      pushEntryCut(bx, by, depth);
     }
   }
 
@@ -5272,7 +5482,7 @@ function addLayerForPath(
         }
         // Geen aparte rechte cut naar zStart; helix start direct op helixRampStartZ
       } else {
-        moves.push({ x: helixStartX, y: helixStartY, z: zStart, type: "cut" });
+        pushEntryCut(helixStartX, helixStartY, zStart);
       }
 
       const maxAnglePerMove = degToRad(8);
@@ -5321,7 +5531,7 @@ function addLayerForPath(
           const z = currentZ + deltaZPerStep * (step + 1);
           const x = cx + R * Math.cos(angle);
           const y = cy + R * Math.sin(angle);
-          moves.push({ x, y, z, type: "cut" });
+          pushEntryCut(x, y, z);
         }
         currentZ = isLastSegment ? targetZ : segmentZ;
         if (currentZ <= targetZ + 1e-6) break;
@@ -5330,7 +5540,7 @@ function addLayerForPath(
       const helixEndX = cx + R * Math.cos(((angle % twoPi) + twoPi) % twoPi);
       const helixEndY = cy + R * Math.sin(((angle % twoPi) + twoPi) % twoPi);
       if (distance2D({ x: helixEndX, y: helixEndY }, start) > 1e-6) {
-        moves.push({ x: start.x, y: start.y, z: depthZ, type: "cut" });
+        pushEntryCut(start.x, start.y, depthZ);
       }
     } else if (plungeOutside) {
       // Contour met insteken buiten: kleine helix rond entryStart (naast het onderdeel) tot op diepte,
@@ -5351,7 +5561,7 @@ function addLayerForPath(
         // Geen aparte rechte cut naar zStart; helix start direct op helixRampStartZ
       } else {
         // Volgende laag: geen retract; direct op diepte (last.z) naar helixstart, dan helix naar depthZ
-        moves.push({ x: helixStartX, y: helixStartY, z: last.z, type: "cut" });
+        pushEntryCut(helixStartX, helixStartY, last.z);
       }
       let currentAngle = 0;
       let currentZ = continuingFromPreviousLayer ? last.z : helixRampStartZ;
@@ -5387,13 +5597,13 @@ function addLayerForPath(
           const z = currentZ + deltaZPerStep * (step + 1);
           const x = cx + R * Math.cos(currentAngle);
           const y = cy + R * Math.sin(currentAngle);
-          moves.push({ x, y, z, type: "cut" });
+          pushEntryCut(x, y, z);
         }
         currentZ = isLastSegment ? targetZ : segmentZ;
         if (currentZ <= targetZ + 1e-6) break;
       }
 
-      moves.push({ x: start.x, y: start.y, z: depthZ, type: "cut" });
+      pushEntryCut(start.x, start.y, depthZ);
       skipFirstPathPoint = true;
     } else if (openPath) {
       // Open strip (facing): compacte helix-ramp op strip-start, binnen werkvlak bij modus "within".
@@ -5416,7 +5626,7 @@ function addLayerForPath(
           moves.push({ x: helixStartX, y: helixStartY, z: zStart + leadInAbove, type: "rapid" });
         }
       } else {
-        moves.push({ x: helixStartX, y: helixStartY, z: last.z, type: "cut" });
+        pushEntryCut(helixStartX, helixStartY, last.z);
       }
 
       let currentAngle = helixPlacement.startAngle;
@@ -5452,13 +5662,13 @@ function addLayerForPath(
           const z = currentZ + deltaZPerStep * (step + 1);
           const x = cx + R * Math.cos(currentAngle);
           const y = cy + R * Math.sin(currentAngle);
-          moves.push({ x, y, z, type: "cut" });
+          pushEntryCut(x, y, z);
         }
         currentZ = isLastSegment ? targetZ : segmentZ;
         if (currentZ <= targetZ + 1e-6) break;
       }
 
-      moves.push({ x: start.x, y: start.y, z: depthZ, type: "cut" });
+      pushEntryCut(start.x, start.y, depthZ);
       skipFirstPathPoint = true;
     } else {
       // Contour ramp: P(path[0]) → ramp → B op diepte; dan contour van B naar P. Onderste laag: contour afmaken tot B.
@@ -5476,7 +5686,7 @@ function addLayerForPath(
 
       const n = path.length;
       if (n < 2 || requiredPathLength <= 1e-6) {
-        moves.push({ x: start.x, y: start.y, z: depthZ, type: "cut" });
+        pushEntryCut(start.x, start.y, depthZ);
       } else {
         let dist = 0;
         let rampEndSeg = 0;
@@ -5492,14 +5702,14 @@ function addLayerForPath(
             if (dist + segLen <= requiredPathLength) {
               dist += segLen;
               const z = rampStartZ + (depthZ - rampStartZ) * (dist / requiredPathLength);
-              moves.push({ x: b.x, y: b.y, z, type: "cut" });
+              pushEntryCut(b.x, b.y, z);
             } else {
               const remaining = requiredPathLength - dist;
               const t = remaining / segLen;
               const rx = a.x + t * (b.x - a.x);
               const ry = a.y + t * (b.y - a.y);
               rampEndPoint = { x: rx, y: ry };
-              moves.push({ x: rx, y: ry, z: depthZ, type: "cut" });
+              pushEntryCut(rx, ry, depthZ);
               rampEndSeg = (i + 1) % n;
               break rampLoop;
             }
@@ -5524,12 +5734,11 @@ function addLayerForPath(
               for (const s of sListFirst) {
                 if (s <= sRampEnd + eps) continue;
                 const t = segLenFirst > 1e-12 ? (s - sRampEnd) / segLenFirst : 0;
-                moves.push({
-                  x: p0First.x + t * (p1First.x - p0First.x),
-                  y: p0First.y + t * (p1First.y - p0First.y),
-                  z: depthZ,
-                  type: "cut",
-                });
+                pushContourCut(
+                  p0First.x + t * (p1First.x - p0First.x),
+                  p0First.y + t * (p1First.y - p0First.y),
+                  depthZ
+                );
               }
 
               // Volle segmenten in wrap-volgorde met tab-profiel
@@ -5547,12 +5756,11 @@ function addLayerForPath(
                 const segLen = sEnd - sStart;
                 for (const s of sList) {
                   const t = segLen > 1e-12 ? (s - sStart) / segLen : 0;
-                  moves.push({
-                    x: p0.x + t * (p1.x - p0.x),
-                    y: p0.y + t * (p1.y - p0.y),
-                    z: getZForTabProfile(s, depthZ, tabConfig),
-                    type: "cut",
-                  });
+                  pushContourCut(
+                    p0.x + t * (p1.x - p0.x),
+                    p0.y + t * (p1.y - p0.y),
+                    getZForTabProfile(s, depthZ, tabConfig)
+                  );
                 }
               }
 
@@ -5570,25 +5778,23 @@ function addLayerForPath(
                   segLenLast > 1e-12
                     ? (s - tabConfig.cumulative[prevIdx]) / segLenLast
                     : 0;
-                moves.push({
-                  x: p0Last.x + t * (rampEndPoint.x - p0Last.x),
-                  y: p0Last.y + t * (rampEndPoint.y - p0Last.y),
-                  z: getZForTabProfile(s, depthZ, tabConfig),
-                  type: "cut",
-                });
+                pushContourCut(
+                  p0Last.x + t * (rampEndPoint.x - p0Last.x),
+                  p0Last.y + t * (rampEndPoint.y - p0Last.y),
+                  getZForTabProfile(s, depthZ, tabConfig)
+                );
               }
-              moves.push({
-                x: rampEndPoint.x,
-                y: rampEndPoint.y,
-                z: getZForTabProfile(sRampEnd, depthZ, tabConfig),
-                type: "cut",
-              });
+              pushContourCut(
+                rampEndPoint.x,
+                rampEndPoint.y,
+                getZForTabProfile(sRampEnd, depthZ, tabConfig)
+              );
             } else {
               for (let k = 0; k < n; k++) {
                 const idx = (rampEndSeg + k) % n;
                 const s = tabConfig ? tabConfig.cumulative[idx] : 0;
                 const z = k === 0 ? depthZ : getZForTabProfile(s, depthZ, tabConfig);
-                moves.push({ x: path[idx].x, y: path[idx].y, z, type: "cut" });
+                pushContourCut(path[idx].x, path[idx].y, z);
               }
               if (rampEndSeg !== 0) {
                 const s =
@@ -5597,19 +5803,14 @@ function addLayerForPath(
                       distance2D(path[rampEndSeg - 1], rampEndPoint)
                     : 0;
                 const zEnd = getZForTabProfile(s, depthZ, tabConfig);
-                moves.push({
-                  x: rampEndPoint.x,
-                  y: rampEndPoint.y,
-                  z: zEnd,
-                  type: "cut",
-                });
+                pushContourCut(rampEndPoint.x, rampEndPoint.y, zEnd);
               }
             }
           } else {
             for (let s = rampEndSeg; s < n; s++) {
-              moves.push({ x: path[s].x, y: path[s].y, z: depthZ, type: "cut" });
+              pushContourCut(path[s].x, path[s].y, depthZ);
             }
-            moves.push({ x: path[0].x, y: path[0].y, z: depthZ, type: "cut" });
+            pushContourCut(path[0].x, path[0].y, depthZ);
           }
         }
       }
@@ -5620,15 +5821,15 @@ function addLayerForPath(
       if (safeZ > leadInAbove) {
         moves.push({ x: entryStart.x, y: entryStart.y, z: leadInAbove, type: "rapid" });
       }
-      moves.push({ x: entryStart.x, y: entryStart.y, z: 0, type: "cut" });
-      moves.push({ x: entryStart.x, y: entryStart.y, z: depthZ, type: "cut" });
+      pushEntryCut(entryStart.x, entryStart.y, 0);
+      pushVerticalPlunge(entryStart.x, entryStart.y, 0, depthZ);
       if (plungeOutside) {
         addCurvedLeadIn(entryStart, start, path[1], depthZ);
       }
     } else {
       // Volgende laag: geen retract; op diepte (last.z) naar entryStart, dan plunge naar depthZ
-      moves.push({ x: entryStart.x, y: entryStart.y, z: last.z, type: "cut" });
-      moves.push({ x: entryStart.x, y: entryStart.y, z: depthZ, type: "cut" });
+      pushEntryCut(entryStart.x, entryStart.y, last.z);
+      pushVerticalPlunge(entryStart.x, entryStart.y, last.z, depthZ);
       if (plungeOutside) {
         addCurvedLeadIn(entryStart, start, path[1], depthZ);
       }
@@ -5652,7 +5853,7 @@ function addLayerForPath(
           const x = p0.x + t * (p1.x - p0.x);
           const y = p0.y + t * (p1.y - p0.y);
           const z = getZForTabProfile(s, depthZ, tabConfig);
-          moves.push({ x, y, z, type: "cut" });
+          pushContourCut(x, y, z);
         }
       }
     } else {
@@ -5670,7 +5871,7 @@ function addLayerForPath(
             z = tabConfig.tabZ;
           }
         }
-        moves.push({ x: p.x, y: p.y, z, type: "cut" });
+        pushContourCut(p.x, p.y, z);
       }
     }
   }
@@ -5826,6 +6027,8 @@ function replaceCutRunsWithArcs(moves) {
   /** @type {{ x: number, y: number, z: number }[]} */
   let cutRun = [];
   let runZ = null;
+  /** @type {number|undefined} */
+  let cutRunFeedMmMin = undefined;
 
   function flushCutRun() {
     if (!cutRun.length) return;
@@ -5833,7 +6036,8 @@ function replaceCutRunsWithArcs(moves) {
     const fitted = circleArcs ?? fitArcsToPoints(cutRun);
     for (const seg of fitted) {
       if (seg.type === "arc") {
-        out.push({
+        /** @type {ToolpathMove} */
+        const arcMove = {
           x: seg.x,
           y: seg.y,
           z: seg.z,
@@ -5841,13 +6045,19 @@ function replaceCutRunsWithArcs(moves) {
           i: seg.i,
           j: seg.j,
           clockwise: seg.clockwise,
-        });
+        };
+        if (Number.isFinite(cutRunFeedMmMin) && cutRunFeedMmMin > 0) arcMove.feedrateMmMin = cutRunFeedMmMin;
+        out.push(arcMove);
       } else {
-        out.push({ x: seg.x, y: seg.y, z: seg.z, type: "cut" });
+        /** @type {ToolpathMove} */
+        const lineMove = { x: seg.x, y: seg.y, z: seg.z, type: "cut" };
+        if (Number.isFinite(cutRunFeedMmMin) && cutRunFeedMmMin > 0) lineMove.feedrateMmMin = cutRunFeedMmMin;
+        out.push(lineMove);
       }
     }
     cutRun = [];
     runZ = null;
+    cutRunFeedMmMin = undefined;
   }
 
   for (const m of moves) {
@@ -5862,11 +6072,15 @@ function replaceCutRunsWithArcs(moves) {
       continue;
     }
     if (runZ == null || Math.abs(m.z - runZ) <= Z_TOL) {
+      if (cutRun.length === 0) {
+        cutRunFeedMmMin = Number.isFinite(m.feedrateMmMin) && m.feedrateMmMin > 0 ? m.feedrateMmMin : undefined;
+      }
       cutRun.push({ x: m.x, y: m.y, z: m.z });
       if (runZ == null) runZ = m.z;
       continue;
     }
     flushCutRun();
+    cutRunFeedMmMin = Number.isFinite(m.feedrateMmMin) && m.feedrateMmMin > 0 ? m.feedrateMmMin : undefined;
     cutRun.push({ x: m.x, y: m.y, z: m.z });
     runZ = m.z;
   }
@@ -6066,11 +6280,12 @@ function getGcodeOperationLabel(params) {
  */
 function appendToolpathMovesAsGcode(lines, moves, cutParams, ctx) {
   const {
-    useInch, decimals, feedrate, mirrorX, mirrorY, mirrorFlipsArcDir,
+    useInch, decimals, mirrorX, mirrorY, mirrorFlipsArcDir,
   } = ctx;
-  let { currentFeed, currentFeedOverridePct, currentX, currentY } = ctx;
+  let { currentFeed, currentX, currentY } = ctx;
   const ARC_RADIUS_TOL_MM = 1.0;
   const ARC_MIN_CHORD_MM = 1e-6;
+  const baseFeedMm = cutParams.feedrate && cutParams.feedrate > 0 ? cutParams.feedrate : 0;
 
   function outCoord(v) {
     if (v == null || !Number.isFinite(v)) return null;
@@ -6085,20 +6300,15 @@ function appendToolpathMovesAsGcode(lines, moves, cutParams, ctx) {
     if (!Number.isFinite(y)) return y;
     return mirrorY ? -y : y;
   }
-  function clampFeedOverridePct(value) {
-    if (!Number.isFinite(value)) return 100;
-    return Math.max(5, Math.min(200, Math.round(value)));
+  function moveFeedMm(m) {
+    if (m.type !== "cut" && m.type !== "arc") return baseFeedMm;
+    if (Number.isFinite(m.feedrateMmMin) && m.feedrateMmMin > 0) return m.feedrateMmMin;
+    return baseFeedMm;
   }
 
   let idx = 0;
   while (idx < moves.length) {
     const m = moves[idx];
-    const targetFeedOverridePct = m.type === "cut" ? clampFeedOverridePct(m.feedOverridePct ?? 100) : 100;
-    if (targetFeedOverridePct !== currentFeedOverridePct) {
-      lines.push(`M220 S${targetFeedOverridePct}`);
-      currentFeedOverridePct = targetFeedOverridePct;
-      currentFeed = 0;
-    }
     const x = Number.isFinite(m.x) ? tx(m.x) : null;
     const y = Number.isFinite(m.y) ? ty(m.y) : null;
     const z = Number.isFinite(m.z) ? m.z : null;
@@ -6131,9 +6341,10 @@ function appendToolpathMovesAsGcode(lines, moves, cutParams, ctx) {
         line = `${gCode} ${xs} ${ys}${zs} I${outCoord(iVal)} J${outCoord(jVal)}`.trim();
       }
     }
-    if (feedrate && feedrate !== currentFeed) {
-      line += ` F${(useInch ? feedrate : cutParams.feedrate).toFixed(useInch ? 2 : 0)}`;
-      currentFeed = feedrate;
+    const feedOut = formatFeedrateForGcode(moveFeedMm(m), useInch);
+    if (feedOut > 0 && feedOut !== currentFeed) {
+      line += ` F${feedOut}`;
+      currentFeed = feedOut;
     }
     lines.push(line);
     if (x != null) currentX = x;
@@ -6142,7 +6353,6 @@ function appendToolpathMovesAsGcode(lines, moves, cutParams, ctx) {
   }
 
   ctx.currentFeed = currentFeed;
-  ctx.currentFeedOverridePct = currentFeedOverridePct;
   ctx.currentX = currentX;
   ctx.currentY = currentY;
 }
@@ -6160,9 +6370,6 @@ function jobToolpathsToGcode(steps) {
   const safeZMm = cutParams.safeHeight ?? DEFAULT_SAFE_Z;
   const safeZ = useInch ? fromMm(safeZMm, "inch") : safeZMm;
   const decimals = useInch ? 4 : 3;
-  const feedrate = cutParams.feedrate && cutParams.feedrate > 0
-    ? (useInch ? cutParams.feedrate / MM_PER_INCH : cutParams.feedrate)
-    : 0;
   const lines = [];
   const mirrorX = !!cutParams.mirrorXEnabled;
   const mirrorY = !!cutParams.mirrorYEnabled;
@@ -6187,12 +6394,10 @@ function jobToolpathsToGcode(steps) {
   const ctx = {
     useInch,
     decimals,
-    feedrate,
     mirrorX,
     mirrorY,
     mirrorFlipsArcDir,
     currentFeed: 0,
-    currentFeedOverridePct: 100,
     currentX: null,
     currentY: null,
   };
@@ -6203,9 +6408,6 @@ function jobToolpathsToGcode(steps) {
       lines.push(`G0 Z${safeZ.toFixed(decimals)}`);
       lines.push(`(${t("gcode.comment.operation", { name: getGcodeOperationLabel(step.params) })})`);
     }
-    ctx.feedrate = stepCut.feedrate && stepCut.feedrate > 0
-      ? (useInch ? stepCut.feedrate / MM_PER_INCH : stepCut.feedrate)
-      : 0;
     ctx.currentFeed = 0;
     /** @type {ToolpathMove[]} */
     const moves = step.toolpath.moves.map((m) => ({ ...m }));
@@ -6215,9 +6417,6 @@ function jobToolpathsToGcode(steps) {
     appendToolpathMovesAsGcode(lines, moves, stepCut, ctx);
   });
 
-  if (ctx.currentFeedOverridePct !== 100) {
-    lines.push("M220 S100");
-  }
   lines.push(`G0 Z${safeZ.toFixed(decimals)}`);
   if (cutParams.mistCoolantEnabled || cutParams.floodCoolantEnabled) lines.push(`M9  (${t("gcode.comment.coolantOff")})`);
   lines.push(`M5  (${t("gcode.comment.spindleOff")})`);
@@ -7289,7 +7488,7 @@ const CHAIN_CAPTURE_FIELD_IDS = [
   "finishing-pass-enabled", "finishing-pass-distance", "finishing-pass-speed-override", "finishing-pass-overlap",
   "feedrate", "spindle-speed", "safe-height", "lead-in-above",
   "xy-origin", "z-origin", "z-offset", "origin-offset-x", "origin-offset-y",
-  "entry-method", "ramp-angle", "plunge-outside",
+  "entry-method", "ramp-angle", "entry-speed", "plunge-pecking-enabled", "plunge-peck-depth", "plunge-peck-retract", "plunge-outside",
   "spindle-speed-enabled", "mist-coolant-enabled", "flood-coolant-enabled",
   "mirror-x-enabled", "mirror-y-enabled", "use-arcs-enabled",
 ];
@@ -7371,6 +7570,7 @@ function captureFormStateForChain() {
   return {
     fields,
     stepoverUnit: document.querySelector('input[name="stepover-unit"]:checked')?.value ?? "percent",
+    entrySpeedUnit: document.querySelector('input[name="entry-speed-unit"]:checked')?.value ?? "percent",
     entryMethod: /** @type {HTMLInputElement|null} */ (document.getElementById("entry-method"))?.value ?? EntryMethod.PLUNGE,
     plungeOutside: /** @type {HTMLInputElement|null} */ (document.getElementById("plunge-outside"))?.value ?? "off",
   };
@@ -7390,6 +7590,14 @@ function applyFormStateForChain(formState) {
   if (stepoverRadio) {
     stepoverRadio.checked = true;
     stepoverRadio.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  const entrySpeedRadio = /** @type {HTMLInputElement|null} */ (
+    document.querySelector(`input[name="entry-speed-unit"][value="${formState.entrySpeedUnit || "percent"}"]`)
+  );
+  if (entrySpeedRadio) {
+    entrySpeedRadio.checked = true;
+    entrySpeedUnitMemory = formState.entrySpeedUnit === "feed" ? "feed" : "percent";
+    syncEntrySpeedInputConstraints(entrySpeedUnitMemory);
   }
   const entryHidden = /** @type {HTMLInputElement|null} */ (document.getElementById("entry-method"));
   const entryVal = formState.entryMethod || EntryMethod.PLUNGE;
@@ -7558,6 +7766,8 @@ function loadChainStepToForm(stepId) {
   if (typeof updateUIForOperationTypeAndShape === "function") updateUIForOperationTypeAndShape();
   if (typeof updateContourTypeVisibility === "function") updateContourTypeVisibility();
   if (typeof updateStepoverHint === "function") updateStepoverHint();
+  if (typeof updateEntrySpeedLabel === "function") updateEntrySpeedLabel();
+  if (typeof updateEntrySpeedHint === "function") updateEntrySpeedHint();
   if (typeof updateToolDiameterVisibility === "function") updateToolDiameterVisibility();
   updateChainFieldLocks();
   renderChainStepsBar();
@@ -9159,6 +9369,9 @@ function setupUI() {
       updateRampInputsDisabled();
       updateContourTabsRampHintVisibility();
       updateContourTypeVisibility();
+      if (typeof updateEntrySpeedLabel === "function") updateEntrySpeedLabel();
+      if (typeof updateEntrySpeedHint === "function") updateEntrySpeedHint();
+      if (typeof updatePlungePeckingVisibility === "function") updatePlungePeckingVisibility();
       if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
     });
   });
@@ -9171,6 +9384,28 @@ function setupUI() {
   updateEntryMethodForEngraving();
   updateRampInputsDisabled();
   updateContourTabsRampHintVisibility();
+
+  const plungePeckingCheckbox = /** @type {HTMLInputElement} */ (document.getElementById("plunge-pecking-enabled"));
+  const plungePeckDepthRow = document.getElementById("plunge-peck-depth-row");
+  const plungePeckRetractRow = document.getElementById("plunge-peck-retract-row");
+  function updatePlungePeckingVisibility() {
+    const isPlunge = entryMethodInput?.value === EntryMethod.PLUNGE;
+    document.querySelectorAll(".plunge-pecking-only").forEach((el) => {
+      if (el.id === "plunge-peck-depth-row" || el.id === "plunge-peck-retract-row") return;
+      el.classList.toggle("hidden", !isPlunge);
+    });
+    if (plungePeckingCheckbox) plungePeckingCheckbox.disabled = !isPlunge;
+    if (!isPlunge && plungePeckingCheckbox) plungePeckingCheckbox.checked = false;
+    const showParams = isPlunge && !!plungePeckingCheckbox?.checked;
+    if (plungePeckDepthRow) plungePeckDepthRow.classList.toggle("hidden", !showParams);
+    if (plungePeckRetractRow) plungePeckRetractRow.classList.toggle("hidden", !showParams);
+  }
+  if (plungePeckingCheckbox) {
+    plungePeckingCheckbox.tabIndex = -1;
+    plungePeckingCheckbox.addEventListener("change", updatePlungePeckingVisibility);
+    plungePeckingCheckbox.addEventListener("click", updatePlungePeckingVisibility);
+  }
+  updatePlungePeckingVisibility();
 
   // Toggle-knoppen voor "Insteken naast part"
   plungeOutsideButtons.forEach((btn) => {
@@ -9241,7 +9476,13 @@ function setupUI() {
 
       const clamped = Math.min(max, Math.max(min, next));
       input.value = String(clamped);
-      if (input.id === "tool-diameter" || input.id === "stepover") updateStepoverHint();
+      if (input.id === "tool-diameter") {
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      } else if (input.id === "stepover") {
+        updateStepoverHint();
+      } else if (input.id === "entry-speed") {
+        updateEntrySpeedHint();
+      }
       if (input.id === "patterned-holes-spacing-x" || input.id === "patterned-holes-spacing-y" || input.id === "patterned-holes-count-x" || input.id === "patterned-holes-count-y") {
         if (typeof updatePatternedHolesTotalHint === "function") updatePatternedHolesTotalHint();
       }
@@ -9375,6 +9616,74 @@ function setupUI() {
   }
   updateStepoverHint();
   updateFacingEvenSpacingHint();
+
+  // Entry speed (plunge/ramp): % ↔ absolute feed, hint en label
+  const entrySpeedWrapper = document.getElementById("entry-speed-input-wrapper");
+  const entrySpeedInput = /** @type {HTMLInputElement | null} */ (document.getElementById("entry-speed"));
+  const entrySpeedHint = document.getElementById("entry-speed-hint");
+  const feedrateInput = /** @type {HTMLInputElement | null} */ (document.getElementById("feedrate"));
+  const entrySpeedUnitRadios = /** @type {NodeListOf<HTMLInputElement>} */ (
+    document.querySelectorAll('input[name="entry-speed-unit"]')
+  );
+
+  function updateEntrySpeedLabel() {
+    const label = document.getElementById("entry-speed-label");
+    const method = entryMethodInput?.value ?? EntryMethod.PLUNGE;
+    if (!label) return;
+    label.textContent = t(method === EntryMethod.RAMP ? "form.rampSpeed" : "form.plungeSpeed");
+  }
+
+  function updateEntrySpeedHint() {
+    if (!entrySpeedHint || !entrySpeedInput || !feedrateInput) return;
+    const displayUnit = getDisplayUnit();
+    const feedDisplay = toNumber(feedrateInput.value);
+    const feedMm = toMm(feedDisplay, displayUnit);
+    const val = toNumber(entrySpeedInput.value);
+    const unit = /** @type {HTMLInputElement} */ (
+      document.querySelector('input[name="entry-speed-unit"]:checked')
+    )?.value ?? "percent";
+    if (!Number.isFinite(feedMm) || feedMm <= 0 || !Number.isFinite(val)) {
+      entrySpeedHint.textContent = "";
+      return;
+    }
+    if (unit === "percent") {
+      const feedInUnit = (val / 100) * feedDisplay;
+      const showVal = displayUnit === "inch" ? feedInUnit.toFixed(2) : Math.round(feedInUnit);
+      entrySpeedHint.textContent = displayUnit === "inch"
+        ? t("form.entrySpeedFeedHintIn", { val: showVal })
+        : t("form.entrySpeedFeedHintMm", { val: showVal });
+    } else {
+      const entryFeedMm = toMm(val, displayUnit);
+      const pct = Math.round((entryFeedMm / feedMm) * 100);
+      entrySpeedHint.textContent = t("form.entrySpeedPctHint", { pct });
+    }
+  }
+
+  entrySpeedUnitRadios.forEach((radio) => {
+    radio.tabIndex = -1;
+    radio.addEventListener("change", () => {
+      if (!radio.checked || !entrySpeedInput || !entrySpeedWrapper || !feedrateInput) return;
+      const newUnit = radio.value === "feed" ? "feed" : "percent";
+      if (newUnit === entrySpeedUnitMemory) return;
+      convertEntrySpeedBetweenUnits(entrySpeedUnitMemory, newUnit);
+      entrySpeedUnitMemory = newUnit;
+      syncEntrySpeedInputConstraints(newUnit);
+      updateEntrySpeedHint();
+      if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
+    });
+  });
+
+  if (entrySpeedInput) entrySpeedInput.addEventListener("input", updateEntrySpeedHint);
+  if (feedrateInput) feedrateInput.addEventListener("input", updateEntrySpeedHint);
+  document.addEventListener("languagechange", updateEntrySpeedLabel);
+  document.addEventListener("languagechange", updateEntrySpeedHint);
+  document.addEventListener("unitchange", updateEntrySpeedHint);
+  entrySpeedUnitMemory = /** @type {HTMLInputElement} */ (
+    document.querySelector('input[name="entry-speed-unit"]:checked')
+  )?.value === "feed" ? "feed" : "percent";
+  syncEntrySpeedInputConstraints(entrySpeedUnitMemory);
+  updateEntrySpeedLabel();
+  updateEntrySpeedHint();
 
   // Meerdere dieptes: stepdown-row tonen/verbergen; default stepdown = totale diepte / 2 (max laaghoogte)
   const multipleDepthsCheckbox = /** @type {HTMLInputElement} */ (document.getElementById("multiple-depths"));
@@ -9548,7 +9857,11 @@ function setupUI() {
     const dy = (Number.isFinite(next.y) ? next.y : 0) - (Number.isFinite(prev.y) ? prev.y : 0);
     const dz = (Number.isFinite(next.z) ? next.z : 0) - (Number.isFinite(prev.z) ? prev.z : 0);
     const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    const feedrate = next.type === "cut" ? (feedrateMmMin > 0 ? feedrateMmMin : 800) : DEFAULT_RAPID_FEEDRATE_MM_MIN;
+    const isCut = next.type === "cut" || next.type === "arc";
+    const moveFeed = Number.isFinite(next.feedrateMmMin) && next.feedrateMmMin > 0
+      ? next.feedrateMmMin
+      : feedrateMmMin;
+    const feedrate = isCut ? (moveFeed > 0 ? moveFeed : 800) : DEFAULT_RAPID_FEEDRATE_MM_MIN;
     const tijdMs = (d * 60000) / feedrate;
     return Math.max(1, tijdMs / speedMultiplier);
   }

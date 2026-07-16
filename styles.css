@@ -974,13 +974,22 @@ legend {
 }
 
 /* Stepover-hint direct onder stepover-veld, links uitgelijnd met begin van de knoppenkolom */
-#stepover-mm-hint {
+#stepover-mm-hint,
+#entry-speed-hint {
   flex-basis: 100%;
   width: calc(100% - 18rem - 8px);
   margin-left: calc(18rem + 8px);
   margin-top: 2px;
   text-align: left;
   white-space: nowrap;
+}
+
+#entry-speed-input-wrapper {
+  min-width: 14rem;
+}
+
+#entry-speed-input-wrapper input {
+  min-width: 2.5rem;
 }
 
 #facing-even-spacing-row {
