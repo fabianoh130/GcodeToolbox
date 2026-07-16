@@ -1883,9 +1883,14 @@ body.theme-light .stepover-unit-toggle .toggle-option span {
   color: var(--text-soft);
 }
 
-body.theme-light .preview-view-btn--active,
 body.theme-light .toggle-btn-input:checked + .toggle-btn,
 body.theme-light .entry-method-btn--active {
+  background: var(--accent-soft);
+  border-color: rgba(14, 165, 233, 0.8);
+  color: var(--accent-strong);
+}
+
+body.theme-light .preview-view-btn--active {
   background: linear-gradient(135deg, var(--accent-soft), #ffffff);
   border-color: rgba(14, 165, 233, 0.8);
   color: var(--accent-strong);
