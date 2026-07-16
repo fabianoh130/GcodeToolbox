@@ -629,8 +629,8 @@
             <legend data-i18n="form.cutLegend">Frees &amp; snijparameters</legend>
             <div id="tool-diameter-row" class="field-row">
               <label for="tool-diameter" data-i18n="form.toolDiameter">Freesdiameter (mm)</label>
-              <div class="input-with-stepper" data-step="1" data-min="0.1">
-                <input type="number" id="tool-diameter" min="0.1" step="any" required value="4" />
+              <div class="input-with-stepper" data-step="0.5" data-min="0.1">
+                <input type="text" inputmode="decimal" class="decimal-input" id="tool-diameter" required value="4" autocomplete="off" spellcheck="false" />
                 <div class="stepper-buttons">
                   <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepper1mmLess">−</button>
                   <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepper1mmMore">+</button>
