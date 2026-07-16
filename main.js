@@ -6667,6 +6667,10 @@ function renderPreview(toolpath, canvas, viewMode = currentPreviewView, cursorCo
   }
 
   toolpath.moves.forEach((m, idx) => {
+    if (m.type === "pause") {
+      projected[idx] = null;
+      return;
+    }
     if (
       !Number.isFinite(m.x) ||
       !Number.isFinite(m.y) ||
