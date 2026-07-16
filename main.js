@@ -8821,6 +8821,11 @@ function setupUI() {
     vectorFileInput.addEventListener("change", () => {
       const file = vectorFileInput.files && vectorFileInput.files[0];
       vectorFileNameEl.textContent = file ? file.name : "";
+      if (file) {
+        const scaleEl = /** @type {HTMLInputElement | null} */ (document.getElementById("vector-scale"));
+        if (scaleEl) scaleEl.value = "100";
+        if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
+      }
     });
   }
 
