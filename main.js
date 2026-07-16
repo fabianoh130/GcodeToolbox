@@ -5994,6 +5994,21 @@ function getGcodeShapeLabel(shape) {
 }
 
 /**
+ * G-code header-comment met freesdiameter en eenheid.
+ * @param {*} cutParams
+ * @param {boolean} useInch
+ * @param {number} decimals
+ * @returns {string|null}
+ */
+function formatGcodeToolDiameterComment(cutParams, useInch, decimals) {
+  const diameterMm = cutParams?.toolDiameter;
+  if (!Number.isFinite(diameterMm) || diameterMm <= 0) return null;
+  const diameter = useInch ? fromMm(diameterMm, "inch") : diameterMm;
+  const unitLabel = useInch ? t("gcode.comment.unitsInch") : t("gcode.comment.unitsMm");
+  return `(${t("gcode.comment.toolDiameter", { value: diameter.toFixed(decimals), unit: unitLabel })})`;
+}
+
+/**
  * Leesbare operatienaam voor G-code header-comment.
  * @param {*} params
  * @returns {string}
@@ -6155,6 +6170,8 @@ function jobToolpathsToGcode(steps) {
 
   lines.push(`(${t("gcode.comment.generated", { url: GCODE_TOOLBOX_URL })})`);
   lines.push(`(${t("gcode.comment.useAtOwnRisk")})`);
+  const toolDiameterComment = formatGcodeToolDiameterComment(cutParams, useInch, decimals);
+  if (toolDiameterComment) lines.push(toolDiameterComment);
   lines.push(`(${t("gcode.comment.operation", { name: getGcodeOperationLabel(firstParams) })})`);
   lines.push(useInch ? `G20  (${t("gcode.comment.unitsInch")})` : `G21  (${t("gcode.comment.unitsMm")})`);
   lines.push(`G90  (${t("gcode.comment.absolute")})`);
@@ -9460,7 +9477,7 @@ function setupUI() {
   let cursorColumnForPreview = null;
 
   // Playback: time-based animatie op vaste 10fps, positie geïnterpoleerd langs het pad
-  const GCODE_HEADER_LINES = 7; // aantal regels vóór de eerste beweging in gegenereerde gcode
+  const GCODE_HEADER_LINES = 8; // aantal regels vóór de eerste beweging in gegenereerde gcode
   const PREVIEW_TICK_MS = 67; // 15fps
   let playbackElapsedMs = 0;
   let playbackStartTime = 0;
