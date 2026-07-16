@@ -7166,6 +7166,50 @@ function downloadGcode(filename, gcode) {
 }
 
 /**
+ * Vraag om een bestandsnaam en download gcode als .nc.
+ * @param {string} suggestedFilename
+ * @param {string} gcode
+ */
+function promptAndDownloadGcode(suggestedFilename, gcode) {
+  const input = window.prompt(t("form.downloadPrompt"), suggestedFilename);
+  if (input == null) return;
+  if (input.trim() === "") {
+    alert(t("form.downloadCanceled"));
+    return;
+  }
+  let filename = sanitizeFilename(input.trim());
+  if (!filename.toLowerCase().endsWith(".nc")) {
+    filename += ".nc";
+  }
+  downloadGcode(filename, gcode);
+}
+
+/** @returns {string} */
+function getGcodeTimestamp() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
+}
+
+/**
+ * Standaard bestandsnaam voor een enkele gcode-export.
+ * @param {{ shape: string, operation: string, shapeParams?: { threadMillType?: string } }} raw
+ * @returns {string}
+ */
+function getSuggestedGcodeFilename(raw) {
+  const ts = getGcodeTimestamp();
+  if (raw.shape === ShapeType.LETTERS) {
+    return `gcode_letters_${ts}.nc`;
+  }
+  if (raw.shape === ShapeType.DXF) {
+    return `gcode_dxf_${raw.operation}_${ts}.nc`;
+  }
+  if (raw.shape === ShapeType.THREAD_MILLING) {
+    return `gcode_thread_milling_${raw.shapeParams?.threadMillType || ThreadMillType.INTERNAL}_${ts}.nc`;
+  }
+  return `gcode_${raw.shape}_${raw.operation}_${ts}.nc`;
+}
+
+/**
  * Download bestand (bijv. JSON).
  */
 function downloadFile(filename, content, mimeType = "application/json") {
@@ -9946,9 +9990,8 @@ function setupUI() {
         if (downloadBtn) {
           downloadBtn.disabled = false;
           downloadBtn.onclick = () => {
-            const now = new Date();
-            const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
-            downloadGcode(`gcode_job_${chainJobSteps.length}steps_${ts}.nc`, gcode);
+            const ts = getGcodeTimestamp();
+            promptAndDownloadGcode(`gcode_job_${chainJobSteps.length}steps_${ts}.nc`, gcode);
           };
         }
         if (copyBtn) {
@@ -10044,21 +10087,7 @@ function setupUI() {
       if (downloadBtn) {
         downloadBtn.disabled = false;
         downloadBtn.onclick = () => {
-          const now = new Date();
-          const ts = `${now.getFullYear()}-${String(
-            now.getMonth() + 1
-          ).padStart(2, "0")}-${String(now.getDate()          ).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}${String(
-            now.getMinutes()
-          ).padStart(2, "0")}`;
-          const filename =
-          raw.shape === ShapeType.LETTERS
-            ? `gcode_letters_${ts}.nc`
-            : raw.shape === ShapeType.DXF
-              ? `gcode_dxf_${raw.operation}_${ts}.nc`
-              : raw.shape === ShapeType.THREAD_MILLING
-                ? `gcode_thread_milling_${raw.shapeParams?.threadMillType || ThreadMillType.INTERNAL}_${ts}.nc`
-                : `gcode_${raw.shape}_${raw.operation}_${ts}.nc`;
-          downloadGcode(filename, gcode);
+          promptAndDownloadGcode(getSuggestedGcodeFilename(raw), gcode);
         };
       }
       if (copyBtn) {
