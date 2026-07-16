@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120mm" height="120mm">
+  <title>Outer square + inner circle (multi-contour)</title>
+  <rect x="10" y="10" width="100" height="100" fill="none" stroke="#000"/>
+  <circle cx="60" cy="60" r="25" fill="none" stroke="#000"/>
+</svg>

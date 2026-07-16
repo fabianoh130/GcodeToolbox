@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 60" width="100mm" height="60mm">
+  <title>Rounded slot (path with arcs and beziers)</title>
+  <path d="M 15 30
+           C 15 18 25 10 35 10
+           L 65 10
+           C 75 10 85 18 85 30
+           C 85 42 75 50 65 50
+           L 35 50
+           C 25 50 15 42 15 30 Z"
+        fill="none" stroke="#000"/>
+</svg>

@@ -1003,13 +1003,22 @@ button.dxf-file-btn {
 }
 
 /* Stepover-hint direct onder stepover-veld, links uitgelijnd met begin van de knoppenkolom */
-#stepover-mm-hint {
+#stepover-mm-hint,
+#entry-speed-hint {
   flex-basis: 100%;
   width: calc(100% - 18rem - 8px);
   margin-left: calc(18rem + 8px);
   margin-top: 2px;
   text-align: left;
   white-space: nowrap;
+}
+
+#entry-speed-input-wrapper {
+  min-width: 14rem;
+}
+
+#entry-speed-input-wrapper input {
+  min-width: 2.5rem;
 }
 
 #facing-even-spacing-row {
@@ -1581,10 +1590,15 @@ body[data-display-mode="simple"] #gcode-form [data-mode="advanced"] {
 
 .form-toolbar .error-message {
   margin-top: 4px;
+  min-height: 0;
+}
+
+.form-toolbar .error-message:not(:empty) {
+  min-height: 1em;
 }
 
 .toolbar-warning {
-  margin: 4px 0 0;
+  margin: 2px 0 0;
   font-size: 0.75rem;
   color: var(--text-soft);
 }
