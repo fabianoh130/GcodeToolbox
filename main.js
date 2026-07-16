@@ -215,7 +215,7 @@ const EntryMethod = {
 };
 
 /**
- * @typedef {{ x: number, y: number, z: number, type: 'rapid'|'cut', feedOverridePct?: number }} ToolpathMove
+ * @typedef {{ x: number, y: number, z: number, type: 'rapid'|'cut'|'arc', feedrateMmMin?: number, i?: number, j?: number, clockwise?: boolean }} ToolpathMove
  * @typedef {{ moves: ToolpathMove[], resultPaths?: {x:number,y:number,z:number}[][], resultTotalDepth?: number, resultBottomZ?: number, resultContourInside?: boolean, resultPathsWithDepth?: {path:{x:number,y:number,z:number}[], topZ:number, bottomZ:number}[], resultBounds?: {minX:number,maxX:number,minY:number,maxY:number}, toolDiameter?: number }} Toolpath
  */
 
@@ -460,21 +460,34 @@ function degToRad(deg) {
 }
 
 /**
- * Berekent M220-feedoverride (%) voor plunge/ramp t.o.v. de normale feedrate.
+ * Berekent plunge/ramp-feedrate in mm/min (afgerond op geheel getal).
  * @param {{ feedrate: number, entrySpeedUnit?: string, entrySpeedValue?: number }} cutParams
  * @returns {number}
  */
-function computeEntryFeedOverridePct(cutParams) {
+function computeEntryFeedrateMm(cutParams) {
   const feedrate = cutParams.feedrate;
-  if (!Number.isFinite(feedrate) || feedrate <= 0) return 100;
+  if (!Number.isFinite(feedrate) || feedrate <= 0) return feedrate;
   const unit = cutParams.entrySpeedUnit === "feed" ? "feed" : "percent";
   const value = cutParams.entrySpeedValue;
+  let entryFeedMm;
   if (unit === "percent") {
     const pct = Number.isFinite(value) ? value : DEFAULT_ENTRY_SPEED_PCT;
-    return Math.max(5, Math.min(200, Math.round(pct)));
+    const clampedPct = Math.max(5, Math.min(200, pct));
+    entryFeedMm = feedrate * (clampedPct / 100);
+  } else {
+    entryFeedMm = Number.isFinite(value) ? value : feedrate * (DEFAULT_ENTRY_SPEED_PCT / 100);
   }
-  const entryFeedMm = Number.isFinite(value) ? value : feedrate * (DEFAULT_ENTRY_SPEED_PCT / 100);
-  return Math.max(5, Math.min(200, Math.round((entryFeedMm / feedrate) * 100)));
+  return Math.max(1, Math.round(entryFeedMm));
+}
+
+/**
+ * @param {number} feedMm
+ * @param {boolean} useInch
+ * @returns {number}
+ */
+function formatFeedrateForGcode(feedMm, useInch) {
+  if (!Number.isFinite(feedMm) || feedMm <= 0) return 0;
+  return Math.round(useInch ? feedMm / MM_PER_INCH : feedMm);
 }
 
 function distance2D(a, b) {
@@ -1325,7 +1338,7 @@ function readInputsFromForm() {
     entrySpeedUnit,
     entrySpeedValue,
   };
-  cutParams.entryFeedOverridePct = computeEntryFeedOverridePct(cutParams);
+  cutParams.entryFeedrateMm = computeEntryFeedrateMm(cutParams);
 
   const originParams = {
     xyOrigin: /** @type {HTMLSelectElement} */ (g("xy-origin")).value,
@@ -1504,7 +1517,7 @@ function getParamsSnapshotReadOnly() {
     entrySpeedUnit,
     entrySpeedValue,
   };
-  cp.entryFeedOverridePct = computeEntryFeedOverridePct(cp);
+  cp.entryFeedrateMm = computeEntryFeedrateMm(cp);
   const ss = v("spindle-speed");
   if (cp.spindleSpeedEnabled && Number.isFinite(ss) && ss > 0) cp.spindleSpeed = ss;
 
@@ -4482,9 +4495,12 @@ function generateToolpath(params) {
       ? Math.max(5, Math.min(200, cutParams.finishingPassSpeedOverridePct))
       : 100;
     if (overridePct === 100) return;
+    const baseFeed = cutParams.feedrate;
+    if (!Number.isFinite(baseFeed) || baseFeed <= 0) return;
+    const finFeedMm = Math.max(1, Math.round(baseFeed * overridePct / 100));
     for (let i = Math.max(0, startIdx); i < moves.length; i++) {
       if (moves[i].type === "cut") {
-        moves[i].feedOverridePct = overridePct;
+        moves[i].feedrateMmMin = finFeedMm;
       }
     }
   }
@@ -4944,11 +4960,14 @@ function addLayerForPath(
 ) {
   if (!path || path.length === 0) return;
 
-  const entryFeedPct = computeEntryFeedOverridePct(cutParams);
+  const entryFeedMm = computeEntryFeedrateMm(cutParams);
+  const baseFeedMm = Math.round(cutParams.feedrate || 0);
   /** @param {number} x @param {number} y @param {number} z */
   function pushEntryCut(x, y, z) {
     const m = { x, y, z, type: "cut" };
-    if (entryFeedPct !== 100) m.feedOverridePct = entryFeedPct;
+    if (Number.isFinite(entryFeedMm) && entryFeedMm > 0 && entryFeedMm !== baseFeedMm) {
+      m.feedrateMmMin = entryFeedMm;
+    }
     moves.push(m);
   }
   /** @param {number} x @param {number} y @param {number} z */
@@ -5937,6 +5956,8 @@ function replaceCutRunsWithArcs(moves) {
   /** @type {{ x: number, y: number, z: number }[]} */
   let cutRun = [];
   let runZ = null;
+  /** @type {number|undefined} */
+  let cutRunFeedMmMin = undefined;
 
   function flushCutRun() {
     if (!cutRun.length) return;
@@ -5944,7 +5965,8 @@ function replaceCutRunsWithArcs(moves) {
     const fitted = circleArcs ?? fitArcsToPoints(cutRun);
     for (const seg of fitted) {
       if (seg.type === "arc") {
-        out.push({
+        /** @type {ToolpathMove} */
+        const arcMove = {
           x: seg.x,
           y: seg.y,
           z: seg.z,
@@ -5952,13 +5974,19 @@ function replaceCutRunsWithArcs(moves) {
           i: seg.i,
           j: seg.j,
           clockwise: seg.clockwise,
-        });
+        };
+        if (Number.isFinite(cutRunFeedMmMin) && cutRunFeedMmMin > 0) arcMove.feedrateMmMin = cutRunFeedMmMin;
+        out.push(arcMove);
       } else {
-        out.push({ x: seg.x, y: seg.y, z: seg.z, type: "cut" });
+        /** @type {ToolpathMove} */
+        const lineMove = { x: seg.x, y: seg.y, z: seg.z, type: "cut" };
+        if (Number.isFinite(cutRunFeedMmMin) && cutRunFeedMmMin > 0) lineMove.feedrateMmMin = cutRunFeedMmMin;
+        out.push(lineMove);
       }
     }
     cutRun = [];
     runZ = null;
+    cutRunFeedMmMin = undefined;
   }
 
   for (const m of moves) {
@@ -5973,11 +6001,15 @@ function replaceCutRunsWithArcs(moves) {
       continue;
     }
     if (runZ == null || Math.abs(m.z - runZ) <= Z_TOL) {
+      if (cutRun.length === 0) {
+        cutRunFeedMmMin = Number.isFinite(m.feedrateMmMin) && m.feedrateMmMin > 0 ? m.feedrateMmMin : undefined;
+      }
       cutRun.push({ x: m.x, y: m.y, z: m.z });
       if (runZ == null) runZ = m.z;
       continue;
     }
     flushCutRun();
+    cutRunFeedMmMin = Number.isFinite(m.feedrateMmMin) && m.feedrateMmMin > 0 ? m.feedrateMmMin : undefined;
     cutRun.push({ x: m.x, y: m.y, z: m.z });
     runZ = m.z;
   }
@@ -6162,11 +6194,12 @@ function getGcodeOperationLabel(params) {
  */
 function appendToolpathMovesAsGcode(lines, moves, cutParams, ctx) {
   const {
-    useInch, decimals, feedrate, mirrorX, mirrorY, mirrorFlipsArcDir,
+    useInch, decimals, mirrorX, mirrorY, mirrorFlipsArcDir,
   } = ctx;
-  let { currentFeed, currentFeedOverridePct, currentX, currentY } = ctx;
+  let { currentFeed, currentX, currentY } = ctx;
   const ARC_RADIUS_TOL_MM = 1.0;
   const ARC_MIN_CHORD_MM = 1e-6;
+  const baseFeedMm = cutParams.feedrate && cutParams.feedrate > 0 ? cutParams.feedrate : 0;
 
   function outCoord(v) {
     if (v == null || !Number.isFinite(v)) return null;
@@ -6181,20 +6214,15 @@ function appendToolpathMovesAsGcode(lines, moves, cutParams, ctx) {
     if (!Number.isFinite(y)) return y;
     return mirrorY ? -y : y;
   }
-  function clampFeedOverridePct(value) {
-    if (!Number.isFinite(value)) return 100;
-    return Math.max(5, Math.min(200, Math.round(value)));
+  function moveFeedMm(m) {
+    if (m.type !== "cut" && m.type !== "arc") return baseFeedMm;
+    if (Number.isFinite(m.feedrateMmMin) && m.feedrateMmMin > 0) return m.feedrateMmMin;
+    return baseFeedMm;
   }
 
   let idx = 0;
   while (idx < moves.length) {
     const m = moves[idx];
-    const targetFeedOverridePct = m.type === "cut" ? clampFeedOverridePct(m.feedOverridePct ?? 100) : 100;
-    if (targetFeedOverridePct !== currentFeedOverridePct) {
-      lines.push(`M220 S${targetFeedOverridePct}`);
-      currentFeedOverridePct = targetFeedOverridePct;
-      currentFeed = 0;
-    }
     const x = Number.isFinite(m.x) ? tx(m.x) : null;
     const y = Number.isFinite(m.y) ? ty(m.y) : null;
     const z = Number.isFinite(m.z) ? m.z : null;
@@ -6227,9 +6255,10 @@ function appendToolpathMovesAsGcode(lines, moves, cutParams, ctx) {
         line = `${gCode} ${xs} ${ys}${zs} I${outCoord(iVal)} J${outCoord(jVal)}`.trim();
       }
     }
-    if (feedrate && feedrate !== currentFeed) {
-      line += ` F${(useInch ? feedrate : cutParams.feedrate).toFixed(useInch ? 2 : 0)}`;
-      currentFeed = feedrate;
+    const feedOut = formatFeedrateForGcode(moveFeedMm(m), useInch);
+    if (feedOut > 0 && feedOut !== currentFeed) {
+      line += ` F${feedOut}`;
+      currentFeed = feedOut;
     }
     lines.push(line);
     if (x != null) currentX = x;
@@ -6238,7 +6267,6 @@ function appendToolpathMovesAsGcode(lines, moves, cutParams, ctx) {
   }
 
   ctx.currentFeed = currentFeed;
-  ctx.currentFeedOverridePct = currentFeedOverridePct;
   ctx.currentX = currentX;
   ctx.currentY = currentY;
 }
@@ -6256,9 +6284,6 @@ function jobToolpathsToGcode(steps) {
   const safeZMm = cutParams.safeHeight ?? DEFAULT_SAFE_Z;
   const safeZ = useInch ? fromMm(safeZMm, "inch") : safeZMm;
   const decimals = useInch ? 4 : 3;
-  const feedrate = cutParams.feedrate && cutParams.feedrate > 0
-    ? (useInch ? cutParams.feedrate / MM_PER_INCH : cutParams.feedrate)
-    : 0;
   const lines = [];
   const mirrorX = !!cutParams.mirrorXEnabled;
   const mirrorY = !!cutParams.mirrorYEnabled;
@@ -6281,12 +6306,10 @@ function jobToolpathsToGcode(steps) {
   const ctx = {
     useInch,
     decimals,
-    feedrate,
     mirrorX,
     mirrorY,
     mirrorFlipsArcDir,
     currentFeed: 0,
-    currentFeedOverridePct: 100,
     currentX: null,
     currentY: null,
   };
@@ -6297,9 +6320,6 @@ function jobToolpathsToGcode(steps) {
       lines.push(`G0 Z${safeZ.toFixed(decimals)}`);
       lines.push(`(${t("gcode.comment.operation", { name: getGcodeOperationLabel(step.params) })})`);
     }
-    ctx.feedrate = stepCut.feedrate && stepCut.feedrate > 0
-      ? (useInch ? stepCut.feedrate / MM_PER_INCH : stepCut.feedrate)
-      : 0;
     ctx.currentFeed = 0;
     /** @type {ToolpathMove[]} */
     const moves = step.toolpath.moves.map((m) => ({ ...m }));
@@ -6309,9 +6329,6 @@ function jobToolpathsToGcode(steps) {
     appendToolpathMovesAsGcode(lines, moves, stepCut, ctx);
   });
 
-  if (ctx.currentFeedOverridePct !== 100) {
-    lines.push("M220 S100");
-  }
   lines.push(`G0 Z${safeZ.toFixed(decimals)}`);
   if (cutParams.mistCoolantEnabled || cutParams.floodCoolantEnabled) lines.push(`M9  (${t("gcode.comment.coolantOff")})`);
   lines.push(`M5  (${t("gcode.comment.spindleOff")})`);
