@@ -1567,10 +1567,15 @@ body[data-display-mode="simple"] #gcode-form [data-mode="advanced"] {
 
 .form-toolbar .error-message {
   margin-top: 4px;
+  min-height: 0;
+}
+
+.form-toolbar .error-message:not(:empty) {
+  min-height: 1em;
 }
 
 .toolbar-warning {
-  margin: 4px 0 0;
+  margin: 2px 0 0;
   font-size: 0.75rem;
   color: var(--text-soft);
 }
