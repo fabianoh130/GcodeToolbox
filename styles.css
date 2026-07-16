@@ -837,7 +837,8 @@ legend {
 }
 
 /* Zelfde stijl als stepper-btn, entry-method-btn, toggle-btn */
-.field-row .dxf-file-btn {
+.field-row .dxf-file-btn,
+button.dxf-file-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -847,8 +848,11 @@ legend {
   background: rgba(15, 23, 42, 0.95);
   color: var(--text-main);
   font-size: 0.86rem;
+  font-family: inherit;
   cursor: pointer;
   transition: border-color var(--transition-fast), background var(--transition-fast);
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .dxf-file-btn:hover {
@@ -1757,25 +1761,18 @@ body[data-display-mode="simple"] #gcode-form [data-mode="advanced"] {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
 }
 
-.dxf-support-open-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 8px 16px;
-  border-radius: 999px;
-  border: 1px solid var(--border-subtle);
-  background: var(--bg);
-  color: var(--text);
-  font-size: 0.88rem;
-  font-weight: 600;
-  cursor: pointer;
+.dxf-support-place-row .dxf-file-btn {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
-.dxf-support-open-btn:hover {
-  filter: brightness(1.05);
+.dxf-support-points-summary {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .dxf-support-actions {

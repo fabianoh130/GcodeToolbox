@@ -7589,6 +7589,26 @@ let dxfSupportPopupPoints = [];
 /** @type {object|null} */
 let dxfSupportPopupView = null;
 
+function getDxfSupportHoleDiameterMm() {
+  const displayUnit = getDisplayUnit();
+  const diaRaw = toNumber(document.getElementById("dxf-support-holes-diameter")?.value);
+  if (Number.isFinite(diaRaw) && diaRaw > 0) return toMm(diaRaw, displayUnit);
+  const toolRaw = toNumber(document.getElementById("tool-diameter")?.value);
+  return toMm(toolRaw, displayUnit);
+}
+
+function syncDxfSupportHoleDiameterFromTool(force = false) {
+  const el = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-support-holes-diameter"));
+  if (!el) return;
+  const toolRaw = toNumber(document.getElementById("tool-diameter")?.value);
+  if (!Number.isFinite(toolRaw) || toolRaw <= 0) return;
+  if (!force) {
+    const diaRaw = toNumber(el.value);
+    if (Number.isFinite(diaRaw) && diaRaw > 0) return;
+  }
+  el.value = String(fromMm(toMm(toolRaw, getDisplayUnit()), getDisplayUnit()));
+}
+
 /**
  * @returns {{ enabled: boolean, pauseAfter: boolean, diameter: number, depth: number|null, points: {x:number,y:number}[] }}
  */
@@ -7596,9 +7616,8 @@ function readDxfSupportHolesFromForm() {
   const enabled = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-support-holes-enabled"))?.checked ?? false;
   const pauseAfter = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-support-pause-after"))?.checked ?? true;
   const displayUnit = getDisplayUnit();
-  const diaRaw = toNumber(document.getElementById("dxf-support-holes-diameter")?.value);
   const depthRaw = toNumber(document.getElementById("dxf-support-holes-depth")?.value);
-  const diameter = toMm(diaRaw, displayUnit);
+  const diameter = getDxfSupportHoleDiameterMm();
   const depth = Number.isFinite(depthRaw) && depthRaw > 0 ? toMm(depthRaw, displayUnit) : null;
   return {
     enabled,
@@ -7686,6 +7705,10 @@ function dxfSupportScreenToWorld(sx, sy, view) {
 }
 
 function renderDxfSupportCanvas() {
+  renderDxfSupportPlaceCanvas();
+}
+
+function renderDxfSupportPlaceCanvas() {
   const canvas = /** @type {HTMLCanvasElement|null} */ (document.getElementById("dxf-support-canvas"));
   if (!canvas || !dxfSupportPopupView) return;
   const ctx = canvas.getContext("2d");
@@ -7823,52 +7846,18 @@ function activateTopPreviewIfSupportHoles(toolpath) {
   });
 }
 
-async function previewDxfSupportInToolpath() {
-  const errorMessage = document.getElementById("error-message");
-  const previewCanvas = /** @type {HTMLCanvasElement|null} */ (document.getElementById("preview-canvas"));
-  try {
-    const raw = readInputsFromForm();
-    if (raw.shape !== ShapeType.DXF) return;
-    const support = readDxfSupportHolesFromForm();
-    if (!support.enabled) {
-      if (errorMessage) errorMessage.textContent = t("dxfSupport.previewNeedsEnabled");
-      return;
-    }
-    if (!support.points.length) {
-      if (errorMessage) errorMessage.textContent = t("error.dxfSupportNoPoints");
-      return;
-    }
-    const text = await getActiveDxfTextForSupport();
-    if (!text) {
-      if (errorMessage) errorMessage.textContent = t("dxfSupport.noDxf");
-      return;
-    }
-    const dxfOrientation = Number(document.getElementById("dxf-orientation")?.value) || 0;
-    const orientedContours = getOrientedDxfContoursFromText(text, dxfOrientation);
-    applyDxfOriginToRaw(raw, orientedContours);
-    const validation = validateInputs(raw);
-    if (!validation.ok) {
-      if (errorMessage) errorMessage.textContent = validation.errors.join(" ");
-      return;
-    }
-    const toolpath = generateToolpath(validation.params);
-    lastToolpath = toolpath;
-    activateTopPreviewIfSupportHoles(toolpath);
-    document.getElementById("preview-reset-btn")?.click();
-    if (previewCanvas) {
-      renderPreview(toolpath, previewCanvas, PreviewViewMode.TOP, null);
-      previewCanvas.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }
-    if (errorMessage) errorMessage.textContent = "";
-  } catch (err) {
-    if (errorMessage) errorMessage.textContent = err instanceof Error ? err.message : String(err);
+function showGeneratedToolpathPreview(toolpath, previewCanvas, getDisplayedColumn) {
+  if (!previewCanvas) return;
+  activateTopPreviewIfSupportHoles(toolpath);
+  renderPreview(toolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
+  if (Number.isFinite(toolpath.dxfSupportMoveStart) && toolpath.dxfSupportMoveStart >= 0) {
+    previewCanvas.closest(".preview-canvas-wrap")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 }
 
 function initDxfSupportUI() {
   const enabledCb = document.getElementById("dxf-support-holes-enabled");
   const openBtn = document.getElementById("dxf-support-open-btn");
-  const previewBtn = document.getElementById("dxf-support-preview-btn");
   const undoBtn = document.getElementById("dxf-support-undo-btn");
   const clearBtn = document.getElementById("dxf-support-clear-btn");
   const doneBtn = document.getElementById("dxf-support-done-btn");
@@ -7882,8 +7871,14 @@ function initDxfSupportUI() {
   if (enabledCb) {
     enabledCb.addEventListener("change", () => {
       updateDxfSupportSettingsVisibility();
+      syncDxfSupportHoleDiameterFromTool(true);
       if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
     });
+  }
+  const toolDiameterInput = document.getElementById("tool-diameter");
+  if (toolDiameterInput) {
+    toolDiameterInput.addEventListener("input", syncDxfSupportHoleDiameterFromTool);
+    toolDiameterInput.addEventListener("change", syncDxfSupportHoleDiameterFromTool);
   }
   ["dxf-support-pause-after", "dxf-support-holes-depth"].forEach((id) => {
     const el = document.getElementById(id);
@@ -7898,7 +7893,6 @@ function initDxfSupportUI() {
     });
   }
   if (openBtn) openBtn.addEventListener("click", () => { openDxfSupportPopup(); });
-  if (previewBtn) previewBtn.addEventListener("click", () => { previewDxfSupportInToolpath(); });
   if (undoBtn) {
     undoBtn.addEventListener("click", () => {
       dxfSupportPopupPoints.pop();
@@ -7975,6 +7969,7 @@ function initDxfSupportUI() {
 
   updateDxfSupportSettingsVisibility();
   updateDxfSupportPointsSummary();
+  syncDxfSupportHoleDiameterFromTool();
 }
 
 /** @type {{ id: string, formState: object, dxfText: string|null }[]} */
@@ -9271,6 +9266,7 @@ function setupUI() {
         const toolEl = /** @type {HTMLInputElement | null} */ (document.getElementById("tool-diameter"));
         if (toolEl) toolEl.value = String(fromMm(DXF_ENGRAVING_TOOL_DIAMETER_MM, u));
       }
+      syncDxfSupportHoleDiameterFromTool();
       updateContourTypeVisibility();
     } else if (selected === ShapeType.FACING) {
       if (operationRow) operationRow.classList.add("hidden");
@@ -10715,8 +10711,7 @@ function setupUI() {
           });
         }
         if (previewCanvas) {
-          activateTopPreviewIfSupportHoles(mergedToolpath);
-          renderPreview(mergedToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
+          showGeneratedToolpathPreview(mergedToolpath, previewCanvas, getDisplayedColumn());
         }
 
         saveLastSettings();
@@ -10812,8 +10807,7 @@ function setupUI() {
         });
       }
       if (previewCanvas) {
-        activateTopPreviewIfSupportHoles(toolpath);
-        renderPreview(toolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
+        showGeneratedToolpathPreview(toolpath, previewCanvas, getDisplayedColumn());
       }
 
       saveLastSettings();
