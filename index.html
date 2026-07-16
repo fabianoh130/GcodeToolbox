@@ -125,7 +125,7 @@
                 <option value="counterbore_bolt" data-i18n="form.shapeCounterboreBolt">Verzinkboring</option>
                 <option value="thread_milling" data-i18n="form.shapeThreadMilling">Draadfrezen</option>
                 <option value="hole_pattern" data-i18n="form.shapePatternedHoles">Patroongaten</option>
-                <option value="dxf" data-i18n="form.shapeDxf">DXF (contouren)</option>
+                <option value="vector_import" data-i18n="form.shapeVector">DXF/SVG (contouren)</option>
               </select>
             </div>
             <div id="hole-pattern-layout-row" class="field-row hole-pattern-only hidden">
@@ -511,22 +511,32 @@
                 </div>
               </div>
 
-              <div class="field-row shape-field shape-dxf hidden">
-                <label for="dxf-file" data-i18n="form.dxfFile">DXF-bestand</label>
+              <div class="field-row shape-field shape-vector hidden">
+                <label for="vector-file" data-i18n="form.vectorFile">DXF- of SVG-bestand</label>
                 <div class="dxf-file-wrapper">
-                  <input type="file" id="dxf-file" accept=".dxf" class="dxf-file-input" />
-                  <label for="dxf-file" class="dxf-file-btn" data-i18n="form.dxfFileChoose">Bestand kiezen</label>
-                  <span class="dxf-file-name" id="dxf-file-name"></span>
+                  <input type="file" id="vector-file" accept=".dxf,.svg,image/svg+xml" class="dxf-file-input" />
+                  <label for="vector-file" class="dxf-file-btn" data-i18n="form.vectorFileChoose">Bestand kiezen</label>
+                  <span class="dxf-file-name" id="vector-file-name"></span>
                 </div>
-                <p class="field-hint" data-i18n="form.dxfFileHint">Kies een .dxf-bestand. Gesloten contouren (lijnen, polylines, cirkels, bogen) worden herkend en uitgefreesd.</p>
+                <p class="field-hint" data-i18n="form.vectorFileHint">Kies een .dxf- of .svg-bestand. Gesloten contouren worden automatisch herkend.</p>
               </div>
-              <div class="field-row shape-field shape-dxf hidden">
-                <label for="dxf-orientation" data-i18n="form.dxfOrientation">Orientatie</label>
-                <select id="dxf-orientation" name="dxf-orientation">
-                  <option value="0" data-i18n="form.dxfOrientation0">Normaal (0°)</option>
-                  <option value="90" data-i18n="form.dxfOrientation90">90° rechts (met de klok mee)</option>
-                  <option value="-90" data-i18n="form.dxfOrientationMinus90">90° links (tegen de klok in)</option>
-                  <option value="180" data-i18n="form.dxfOrientation180">180° (ondersteboven)</option>
+              <div class="field-row shape-field shape-vector hidden">
+                <label for="vector-scale" data-i18n="form.vectorScale">Schaal (%)</label>
+                <div class="input-with-stepper" data-step="1" data-min="0.1">
+                  <input type="number" id="vector-scale" min="0.1" step="any" value="100" />
+                  <div class="stepper-buttons">
+                    <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
+                    <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
+                  </div>
+                </div>
+              </div>
+              <div class="field-row shape-field shape-vector hidden">
+                <label for="vector-orientation" data-i18n="form.vectorOrientation">Orientatie</label>
+                <select id="vector-orientation" name="vector-orientation">
+                  <option value="0" data-i18n="form.vectorOrientation0">Normaal (0°)</option>
+                  <option value="90" data-i18n="form.vectorOrientation90">90° rechts (met de klok mee)</option>
+                  <option value="-90" data-i18n="form.vectorOrientationMinus90">90° links (tegen de klok in)</option>
+                  <option value="180" data-i18n="form.vectorOrientation180">180° (ondersteboven)</option>
                 </select>
               </div>
             </div>
@@ -1088,6 +1098,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
+  <script src="svg-import.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dxf-parser@1.1.2/dist/dxf-parser.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/clipper-lib@6.4.2/clipper.js"></script>
   <script src="https://storage.ko-fi.com/cdn/scripts/overlay-widget.js"></script>

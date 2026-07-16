@@ -1,0 +1,32 @@
+name: Test SVG import
+
+on:
+  push:
+    branches: [main, 'cursor/**']
+    paths:
+      - 'svg-import.js'
+      - 'samples/svg/**'
+      - 'scripts/test-svg-import.js'
+      - '.github/workflows/test-svg-import.yml'
+  pull_request:
+    paths:
+      - 'svg-import.js'
+      - 'samples/svg/**'
+      - 'scripts/test-svg-import.js'
+      - '.github/workflows/test-svg-import.yml'
+
+jobs:
+  test-svg-parser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install linkedom (DOMParser for Node)
+        run: npm install linkedom --no-save
+
+      - name: Run SVG import smoke tests
+        run: node scripts/test-svg-import.js
