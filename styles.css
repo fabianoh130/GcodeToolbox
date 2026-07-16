@@ -1680,6 +1680,110 @@ body[data-display-mode="simple"] #gcode-form [data-mode="advanced"] {
   transform: translateY(1px);
 }
 
+.dxf-support-modal {
+  max-width: min(96vw, 980px);
+  width: calc(100% - 32px);
+  max-height: calc(100vh - 32px);
+  background: var(--bg-elevated);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-soft);
+  border: 1px solid var(--border-subtle);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dxf-support-header h2 {
+  margin: 0 0 6px;
+  font-size: 1.1rem;
+}
+
+.dxf-support-intro {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--text-soft);
+}
+
+.dxf-support-canvas-wrap {
+  flex: 1 1 auto;
+  min-height: 280px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: #0f172a;
+  overflow: hidden;
+}
+
+#dxf-support-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  cursor: crosshair;
+}
+
+.dxf-support-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.dxf-support-toolbar-btn,
+.dxf-support-secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.dxf-support-toolbar-btn:hover,
+.dxf-support-secondary-btn:hover {
+  filter: brightness(1.05);
+}
+
+.dxf-support-popup-count,
+.dxf-support-points-summary {
+  font-size: 0.85rem;
+  color: var(--text-soft);
+}
+
+.dxf-support-place-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.dxf-support-open-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dxf-support-open-btn:hover {
+  filter: brightness(1.05);
+}
+
+.dxf-support-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 @media (max-width: 960px) {
   .app-main {
     grid-template-columns: minmax(0, 1fr);

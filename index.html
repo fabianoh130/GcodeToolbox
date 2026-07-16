@@ -529,6 +529,42 @@
                   <option value="180" data-i18n="form.dxfOrientation180">180° (ondersteboven)</option>
                 </select>
               </div>
+              <div class="field-row shape-field shape-dxf shape-dxf-support hidden field-row--inline">
+                <span class="field-label" data-i18n="form.dxfSupportHoles">Support-gaten</span>
+                <label class="toggle-btn-label">
+                  <input type="checkbox" id="dxf-support-holes-enabled" class="toggle-btn-input" />
+                  <span class="toggle-btn">
+                    <span class="toggle-btn-no" data-i18n="form.no">Nee</span>
+                    <span class="toggle-btn-yes" data-i18n="form.yes">Ja</span>
+                  </span>
+                </label>
+              </div>
+              <div id="dxf-support-settings" class="shape-field shape-dxf shape-dxf-support hidden">
+                <div class="field-row">
+                  <label for="dxf-support-holes-diameter" data-i18n="form.dxfSupportHolesDiameter">Gat-diameter</label>
+                  <input type="number" id="dxf-support-holes-diameter" name="dxf-support-holes-diameter" min="0.1" step="0.1" value="5" />
+                </div>
+                <div class="field-row">
+                  <label for="dxf-support-holes-depth" data-i18n="form.dxfSupportHolesDepth">Gat-diepte</label>
+                  <input type="number" id="dxf-support-holes-depth" name="dxf-support-holes-depth" min="0.1" step="0.1" />
+                  <p class="field-hint" data-i18n="form.dxfSupportHolesDepthHint">Laat leeg om de totale diepte te gebruiken.</p>
+                </div>
+                <div class="field-row field-row--inline">
+                  <span class="field-label" data-i18n="form.dxfSupportPause">Pauze na gaten (M0)</span>
+                  <label class="toggle-btn-label">
+                    <input type="checkbox" id="dxf-support-pause-after" class="toggle-btn-input" checked />
+                    <span class="toggle-btn">
+                      <span class="toggle-btn-no" data-i18n="form.no">Nee</span>
+                      <span class="toggle-btn-yes" data-i18n="form.yes">Ja</span>
+                    </span>
+                  </label>
+                </div>
+                <div class="field-row dxf-support-place-row">
+                  <button type="button" id="dxf-support-open-btn" class="dxf-support-open-btn" data-i18n="form.dxfSupportOpen">Support-gaten plaatsen…</button>
+                  <span id="dxf-support-points-summary" class="dxf-support-points-summary" data-i18n="form.dxfSupportPointsNone">Geen punten geplaatst</span>
+                </div>
+                <p class="field-hint" data-i18n="form.dxfSupportHolesHint">Boor eerst support-gaten, pauzeer de machine en schroef de plaat vast voordat de DXF-contour wordt gesneden.</p>
+              </div>
             </div>
 
             <div id="operation-row" class="field-row">
@@ -972,6 +1008,27 @@
       <button type="button" id="first-visit-dismiss" class="first-visit-dismiss-btn" data-i18n="firstVisit.ok">
         Got it
       </button>
+    </div>
+  </div>
+
+  <div id="dxf-support-overlay" class="first-visit-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="dxf-support-title">
+    <div class="dxf-support-modal">
+      <div class="dxf-support-header">
+        <h2 id="dxf-support-title" data-i18n="dxfSupport.title">Support-gaten plaatsen</h2>
+        <p class="dxf-support-intro" data-i18n="dxfSupport.intro">Klik op het bovenaanzicht om support-gaten te plaatsen. Rechtsklik of Shift+klik om een punt te verwijderen.</p>
+      </div>
+      <div class="dxf-support-canvas-wrap">
+        <canvas id="dxf-support-canvas" width="900" height="600" aria-label="DXF bovenaanzicht"></canvas>
+      </div>
+      <div class="dxf-support-toolbar">
+        <button type="button" id="dxf-support-undo-btn" class="dxf-support-toolbar-btn" data-i18n="dxfSupport.undo">Laatste verwijderen</button>
+        <button type="button" id="dxf-support-clear-btn" class="dxf-support-toolbar-btn" data-i18n="dxfSupport.clear">Alles wissen</button>
+        <span id="dxf-support-popup-count" class="dxf-support-popup-count"></span>
+      </div>
+      <div class="dxf-support-actions">
+        <button type="button" id="dxf-support-cancel-btn" class="dxf-support-secondary-btn" data-i18n="common.cancel">Annuleren</button>
+        <button type="button" id="dxf-support-done-btn" class="first-visit-dismiss-btn" data-i18n="dxfSupport.done">Klaar</button>
+      </div>
     </div>
   </div>
 
