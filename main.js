@@ -5999,7 +5999,7 @@ function formatGcodeToolDiameterComment(cutParams, useInch, decimals) {
   if (!Number.isFinite(diameterMm) || diameterMm <= 0) return null;
   const diameter = useInch ? fromMm(diameterMm, "inch") : diameterMm;
   const unitLabel = useInch ? t("gcode.comment.unitsInch") : t("gcode.comment.unitsMm");
-  return `(freesdiameter: ${diameter.toFixed(decimals)} ${unitLabel})`;
+  return `(${t("gcode.comment.toolDiameter", { value: diameter.toFixed(decimals), unit: unitLabel })})`;
 }
 
 /**
