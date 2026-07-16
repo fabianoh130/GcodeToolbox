@@ -33,6 +33,30 @@ This project was created out of my own need for a practical toolbox, and I want 
 
 # Version
 
+## 4.2
+* SVG contour import (same pipeline as DXF)
+* DXF support screw holes — place extra holes on a top-view canvas with a pause to screw down your stock for better support.
+* Optional plunge pecking with configurable peck depth
+* Configurable plunge and ramp entry speed (default 33% of feed rate)
+* Download prompt asks for filename before saving G-code
+* Tool diameter added to G-code header comment
+* Fixed bug with decimal input for tool diameter
+
+## 4.1
+* Bugfixes for threadmilling retracts
+* Added thread mill direction
+* Depth levels rounded to three decimals (thanks to 35thpercentile)
+* Regenerate indicator bug fixed (thanks to 35thpercentile)
+
+## 4.0
+* Added the option to chain operations
+* Fixes of reported bugs in facing operation
+* Added thread milling opperation
+* Added engraving to DXF operation where the pad follows the DXF lines.
+* Merged the Patterened holes into one operation
+* Fixed some bugs with the engraving logic
+* Changed origin offset to offset from origin
+
 ## 3.8
 * Added origin offset
 * Fixed a bug where finishing pass was showed in facing operation
