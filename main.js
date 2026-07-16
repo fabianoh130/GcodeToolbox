@@ -1543,7 +1543,7 @@ function paramsSnapshotsEqual(a, b) {
     if (!sa !== !sb) return false;
     if (sa && sb) {
       if (sa.enabled !== sb.enabled || sa.pauseAfter !== sb.pauseAfter) return false;
-      if (!eq(sa.diameter, sb.diameter) || !eq(sa.depth ?? NaN, sb.depth ?? NaN)) return false;
+      if (!eq(sa.diameter, sb.diameter)) return false;
       const pa = sa.points || [], pb = sb.points || [];
       if (pa.length !== pb.length) return false;
       for (let i = 0; i < pa.length; i++) {
