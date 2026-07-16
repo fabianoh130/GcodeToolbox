@@ -3415,7 +3415,7 @@ function appendDxfSupportHolesMoves(moves, params) {
   const cutParams = params.cutParams;
   const safeZ = cutParams.safeHeight;
   const holeDiameter = support.diameter;
-  const holeDepth = Number.isFinite(support.depth) && support.depth > 0 ? support.depth : cutParams.totalDepth;
+  const holeDepth = cutParams.totalDepth;
   const toolRadius = cutParams.toolDiameter / 2;
   const holeDepths = computeDepthLevels(holeDepth, cutParams.stepdown);
   const entryMethod = EntryMethod.PLUNGE;
@@ -7611,20 +7611,16 @@ function syncDxfSupportHoleDiameterFromTool(force = false) {
 }
 
 /**
- * @returns {{ enabled: boolean, pauseAfter: boolean, diameter: number, depth: number|null, points: {x:number,y:number}[] }}
+ * @returns {{ enabled: boolean, pauseAfter: boolean, diameter: number, points: {x:number,y:number}[] }}
  */
 function readDxfSupportHolesFromForm() {
   const enabled = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-support-holes-enabled"))?.checked ?? false;
   const pauseAfter = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-support-pause-after"))?.checked ?? true;
-  const displayUnit = getDisplayUnit();
-  const depthRaw = toNumber(document.getElementById("dxf-support-holes-depth")?.value);
   const diameter = getDxfSupportHoleDiameterMm();
-  const depth = Number.isFinite(depthRaw) && depthRaw > 0 ? toMm(depthRaw, displayUnit) : null;
   return {
     enabled,
     pauseAfter,
     diameter,
-    depth,
     points: currentDxfSupportPoints.map((p) => ({ x: p.x, y: p.y })),
   };
 }
@@ -7648,8 +7644,9 @@ function updateDxfSupportPopupCount() {
 
 function updateDxfSupportSettingsVisibility() {
   const enabled = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-support-holes-enabled"))?.checked ?? false;
+  const shape = document.getElementById("shape")?.value;
   const settings = document.getElementById("dxf-support-settings");
-  if (settings) settings.classList.toggle("hidden", !enabled);
+  if (settings) settings.classList.toggle("hidden", !enabled || shape !== ShapeType.DXF);
 }
 
 function syncDxfSupportPointsToActiveChainStep() {
@@ -7883,7 +7880,7 @@ function initDxfSupportUI() {
     toolDiameterInput.addEventListener("input", syncDxfSupportHoleDiameterFromTool);
     toolDiameterInput.addEventListener("change", syncDxfSupportHoleDiameterFromTool);
   }
-  ["dxf-support-pause-after", "dxf-support-holes-depth"].forEach((id) => {
+  ["dxf-support-pause-after"].forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
     el.addEventListener("input", () => { if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator(); });
@@ -7994,7 +7991,7 @@ const CHAIN_CAPTURE_FIELD_IDS = [
   "circular-pattern-holes-count", "circular-pattern-holes-diameter", "circular-pattern-holes-circle-diameter",
   "circular-pattern-holes-start-angle", "circular-pattern-holes-center-hole", "circular-pattern-holes-center-diameter",
   "dxf-orientation",
-  "dxf-support-holes-enabled", "dxf-support-holes-diameter", "dxf-support-holes-depth", "dxf-support-pause-after",
+  "dxf-support-holes-enabled", "dxf-support-holes-diameter", "dxf-support-pause-after",
   "facing-mode", "facing-direction", "facing-finish-mode", "facing-even-spacing",
   "contour-type", "tabs-enabled", "tab-interval", "tab-width", "tab-height",
   "tool-diameter", "total-depth", "multiple-depths", "stepdown", "stepover",
@@ -9358,6 +9355,7 @@ function setupUI() {
     updateContourTypeVisibility();
     if (typeof updateStepoverHint === "function") updateStepoverHint();
     updateChainFieldLocks();
+    updateDxfSupportSettingsVisibility();
   }
 
   // Track last effective shape inside closure (static-like property)
@@ -10250,14 +10248,6 @@ function setupUI() {
   /** @type {number[]} cumulatieve segmentduur in ms (index i = eindtijd van segment i→i+1), gebouwd bij start playback */
   let playbackCumulativeTimesMs = [];
   let playbackTotalDurationMs = 0;
-  const DXF_SUPPORT_PLAYBACK_PAUSE_MS = 5000;
-  let playbackDxfPauseResumeAt = null;
-  let playbackDxfPausePassed = false;
-
-  function resetDxfPlaybackPauseState() {
-    playbackDxfPauseResumeAt = null;
-    playbackDxfPausePassed = false;
-  }
 
   /**
    * Berekent de preview-duur in ms voor het segment van move index naar index+1.
@@ -10455,45 +10445,13 @@ function setupUI() {
 
   function playbackTick() {
     if (!isPlaying || !lastToolpath.moves.length) return;
-
-    const pauseIndex = Number.isFinite(lastToolpath.dxfSupportPauseIndex) ? lastToolpath.dxfSupportPauseIndex : -1;
-    const pauseTimeMs = pauseIndex >= 0 ? playbackCumulativeTimesMs[pauseIndex] : null;
-
-    if (playbackDxfPauseResumeAt !== null) {
-      playbackElapsedMs = pauseTimeMs ?? playbackElapsedMs;
-      syncGcodeCursorToPlayback();
-      if (previewCanvas) renderPreview(lastToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
-      if (Date.now() < playbackDxfPauseResumeAt) return;
-      playbackDxfPauseResumeAt = null;
-      playbackDxfPausePassed = true;
-      playbackElapsedMs = (pauseTimeMs ?? 0) + 1;
-      playbackStartTime = Date.now() - playbackElapsedMs / playbackSpeedMultiplier;
-    }
-
     const elapsedMs = (Date.now() - playbackStartTime) * playbackSpeedMultiplier;
-    if (
-      !playbackDxfPausePassed &&
-      pauseIndex >= 0 &&
-      pauseTimeMs !== null &&
-      playbackCumulativeTimesMs.length > pauseIndex &&
-      elapsedMs >= pauseTimeMs - 1
-    ) {
-      playbackElapsedMs = pauseTimeMs;
-      playbackDxfPauseResumeAt = Date.now() + DXF_SUPPORT_PLAYBACK_PAUSE_MS;
-      syncGcodeCursorToPlayback();
-      if (previewCanvas) renderPreview(lastToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
-      updatePlaybackButtonsState();
-      return;
-    }
-
     if (elapsedMs >= playbackTotalDurationMs) {
       playbackElapsedMs = playbackTotalDurationMs;
-      resetDxfPlaybackPauseState();
       stopPlayback();
       updatePlaybackButtonsState();
       return;
     }
-
     playbackElapsedMs = elapsedMs;
     syncGcodeCursorToPlayback();
     if (previewCanvas) renderPreview(lastToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
@@ -10501,7 +10459,6 @@ function setupUI() {
 
   function stopPlayback() {
     isPlaying = false;
-    playbackDxfPauseResumeAt = null;
     if (playbackIntervalId !== null) {
       clearInterval(playbackIntervalId);
       playbackIntervalId = null;
@@ -10562,11 +10519,6 @@ function setupUI() {
         playbackCumulativeTimesMs = cumulative;
         playbackTotalDurationMs = total;
         if (playbackTotalDurationMs <= 0) return;
-        const pauseIndex = Number.isFinite(lastToolpath.dxfSupportPauseIndex) ? lastToolpath.dxfSupportPauseIndex : -1;
-        const pauseTimeMs = pauseIndex >= 0 ? playbackCumulativeTimesMs[pauseIndex] : null;
-        if (playbackDxfPausePassed || pauseTimeMs === null || playbackElapsedMs < pauseTimeMs - 1) {
-          playbackDxfPauseResumeAt = null;
-        }
         playbackStartTime = Date.now() - playbackElapsedMs / playbackSpeedMultiplier;
         isPlaying = true;
         playbackIntervalId = setInterval(playbackTick, PREVIEW_TICK_MS);
@@ -10580,7 +10532,6 @@ function setupUI() {
     resetBtn.addEventListener("click", () => {
       if (!lastToolpath.moves.length) return;
       playbackElapsedMs = 0;
-      resetDxfPlaybackPauseState();
       stopPlayback();
       syncGcodeCursorToPlayback(GCODE_HEADER_LINES);
       if (previewCanvas) renderPreview(lastToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
@@ -10727,7 +10678,6 @@ function setupUI() {
         lastToolpath = mergedToolpath;
 
         stopPlayback();
-        resetDxfPlaybackPauseState();
         playbackElapsedMs = 0;
         updatePlaybackButtonsState();
 
@@ -10805,7 +10755,6 @@ function setupUI() {
         if (copyBtn) copyBtn.disabled = true;
         lastToolpath = { moves: [] };
         stopPlayback();
-        resetDxfPlaybackPauseState();
         playbackElapsedMs = 0;
         updatePlaybackButtonsState();
         if (previewCanvas) renderPreview(lastToolpath, previewCanvas, currentPreviewView);
@@ -10828,7 +10777,6 @@ function setupUI() {
       const gcode = toolpathToGcode(toolpath, validation.params);
 
       stopPlayback();
-      resetDxfPlaybackPauseState();
       playbackElapsedMs = 0;
       updatePlaybackButtonsState();
 
