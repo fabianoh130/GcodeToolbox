@@ -222,6 +222,7 @@ const EntryMethod = {
 const DEFAULT_SAFE_Z = 10; // mm, standaard veilige hoogte (overschrijfbaar via formulier)
 const DEFAULT_ENTRY_SPEED_PCT = 33; // standaard plunge/ramp als % van feedrate
 const DEFAULT_PLUNGE_PECK_DEPTH_MM = 1;
+const DEFAULT_PLUNGE_PECK_RETRACT_MM = 1;
 
 /** @type {"percent"|"feed"} */
 let entrySpeedUnitMemory = "percent";
@@ -1321,6 +1322,7 @@ function readInputsFromForm() {
     ? false
     : (/** @type {HTMLInputElement} */ (g("plunge-pecking-enabled"))?.checked ?? false);
   const plungePeckDepthRaw = toMm(toNumber(g("plunge-peck-depth")?.value), displayUnit);
+  const plungePeckRetractRaw = toMm(toNumber(g("plunge-peck-retract")?.value), displayUnit);
 
   const cutParams = {
     toolDiameter,
@@ -1347,6 +1349,9 @@ function readInputsFromForm() {
     plungePeckDepthMm: Number.isFinite(plungePeckDepthRaw) && plungePeckDepthRaw > 0
       ? plungePeckDepthRaw
       : DEFAULT_PLUNGE_PECK_DEPTH_MM,
+    plungePeckRetractMm: Number.isFinite(plungePeckRetractRaw) && plungePeckRetractRaw > 0
+      ? plungePeckRetractRaw
+      : DEFAULT_PLUNGE_PECK_RETRACT_MM,
   };
   cutParams.entryFeedrateMm = computeEntryFeedrateMm(cutParams);
 
@@ -1507,6 +1512,7 @@ function getParamsSnapshotReadOnly() {
 
   const plungePeckingEnabled = isSimple ? false : (el("plunge-pecking-enabled")?.checked ?? false);
   const plungePeckDepthRaw = vm("plunge-peck-depth");
+  const plungePeckRetractRaw = vm("plunge-peck-retract");
 
   const cp = {
     toolDiameter: toolD,
@@ -1533,6 +1539,9 @@ function getParamsSnapshotReadOnly() {
     plungePeckDepthMm: Number.isFinite(plungePeckDepthRaw) && plungePeckDepthRaw > 0
       ? plungePeckDepthRaw
       : DEFAULT_PLUNGE_PECK_DEPTH_MM,
+    plungePeckRetractMm: Number.isFinite(plungePeckRetractRaw) && plungePeckRetractRaw > 0
+      ? plungePeckRetractRaw
+      : DEFAULT_PLUNGE_PECK_RETRACT_MM,
   };
   cp.entryFeedrateMm = computeEntryFeedrateMm(cp);
   const ss = v("spindle-speed");
@@ -1668,6 +1677,9 @@ function validateInputs(raw) {
     if (raw.cutParams.plungePeckingEnabled) {
       if (!Number.isFinite(cp.plungePeckDepthMm) || cp.plungePeckDepthMm <= 0) {
         errors.push(t("error.plungePeckDepthRequired"));
+      }
+      if (!Number.isFinite(cp.plungePeckRetractMm) || cp.plungePeckRetractMm <= 0) {
+        errors.push(t("error.plungePeckRetractRequired"));
       }
     }
   }
@@ -5001,6 +5013,9 @@ function addLayerForPath(
   const plungePeckDepthMm = Number.isFinite(cutParams.plungePeckDepthMm) && cutParams.plungePeckDepthMm > 0
     ? cutParams.plungePeckDepthMm
     : DEFAULT_PLUNGE_PECK_DEPTH_MM;
+  const plungePeckRetractMm = Number.isFinite(cutParams.plungePeckRetractMm) && cutParams.plungePeckRetractMm > 0
+    ? cutParams.plungePeckRetractMm
+    : DEFAULT_PLUNGE_PECK_RETRACT_MM;
 
   /** @param {number} x @param {number} y @param {number} zFrom @param {number} zTo */
   function pushVerticalPlunge(x, y, zFrom, zTo) {
@@ -5018,7 +5033,8 @@ function addLayerForPath(
       pushEntryCut(x, y, nextZ);
       currentZ = nextZ;
       if (Math.abs(currentZ - zTo) < 1e-6) break;
-      moves.push({ x, y, z: safeZ, type: "rapid" });
+      const retractZ = goingDeeper ? currentZ + plungePeckRetractMm : currentZ - plungePeckRetractMm;
+      pushEntryCut(x, y, retractZ);
       moves.push({ x, y, z: currentZ, type: "rapid" });
     }
   }
@@ -7405,7 +7421,7 @@ const CHAIN_CAPTURE_FIELD_IDS = [
   "finishing-pass-enabled", "finishing-pass-distance", "finishing-pass-speed-override", "finishing-pass-overlap",
   "feedrate", "spindle-speed", "safe-height", "lead-in-above",
   "xy-origin", "z-origin", "z-offset", "origin-offset-x", "origin-offset-y",
-  "entry-method", "ramp-angle", "entry-speed", "plunge-pecking-enabled", "plunge-peck-depth", "plunge-outside",
+  "entry-method", "ramp-angle", "entry-speed", "plunge-pecking-enabled", "plunge-peck-depth", "plunge-peck-retract", "plunge-outside",
   "spindle-speed-enabled", "mist-coolant-enabled", "flood-coolant-enabled",
   "mirror-x-enabled", "mirror-y-enabled", "use-arcs-enabled",
 ];
@@ -9304,16 +9320,18 @@ function setupUI() {
 
   const plungePeckingCheckbox = /** @type {HTMLInputElement} */ (document.getElementById("plunge-pecking-enabled"));
   const plungePeckDepthRow = document.getElementById("plunge-peck-depth-row");
+  const plungePeckRetractRow = document.getElementById("plunge-peck-retract-row");
   function updatePlungePeckingVisibility() {
     const isPlunge = entryMethodInput?.value === EntryMethod.PLUNGE;
     document.querySelectorAll(".plunge-pecking-only").forEach((el) => {
+      if (el.id === "plunge-peck-depth-row" || el.id === "plunge-peck-retract-row") return;
       el.classList.toggle("hidden", !isPlunge);
     });
     if (plungePeckingCheckbox) plungePeckingCheckbox.disabled = !isPlunge;
     if (!isPlunge && plungePeckingCheckbox) plungePeckingCheckbox.checked = false;
-    if (plungePeckDepthRow && plungePeckingCheckbox) {
-      plungePeckDepthRow.classList.toggle("hidden", !isPlunge || !plungePeckingCheckbox.checked);
-    }
+    const showParams = isPlunge && !!plungePeckingCheckbox?.checked;
+    if (plungePeckDepthRow) plungePeckDepthRow.classList.toggle("hidden", !showParams);
+    if (plungePeckRetractRow) plungePeckRetractRow.classList.toggle("hidden", !showParams);
   }
   if (plungePeckingCheckbox) {
     plungePeckingCheckbox.tabIndex = -1;

@@ -896,6 +896,16 @@
                 </div>
               </div>
             </div>
+            <div id="plunge-peck-retract-row" class="field-row plunge-pecking-only hidden">
+              <label for="plunge-peck-retract" data-i18n="form.plungePeckRetract">Peck retract (mm)</label>
+              <div class="input-with-stepper" data-step="0.1" data-min="0.1">
+                <input type="number" id="plunge-peck-retract" min="0.1" step="0.1" value="1" data-i18n-title="form.plungePeckRetractTitle" />
+                <div class="stepper-buttons">
+                  <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
+                  <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
+                </div>
+              </div>
+            </div>
             <div id="ramp-settings" class="ramp-settings hidden">
               <div class="field-row">
                 <label for="ramp-angle" data-i18n="form.rampAngle">Max. ramp-hoek (°)</label>
