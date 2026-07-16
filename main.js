@@ -215,8 +215,8 @@ const EntryMethod = {
 };
 
 /**
- * @typedef {{ x: number, y: number, z: number, type: 'rapid'|'cut', feedOverridePct?: number }} ToolpathMove
- * @typedef {{ moves: ToolpathMove[], resultPaths?: {x:number,y:number,z:number}[][], resultTotalDepth?: number, resultBottomZ?: number, resultContourInside?: boolean, resultPathsWithDepth?: {path:{x:number,y:number,z:number}[], topZ:number, bottomZ:number}[], resultBounds?: {minX:number,maxX:number,minY:number,maxY:number}, toolDiameter?: number }} Toolpath
+ * @typedef {{ x: number, y: number, z: number, type: 'rapid'|'cut'|'pause'|'arc', feedOverridePct?: number, i?: number, j?: number, clockwise?: boolean }} ToolpathMove
+ * @typedef {{ moves: ToolpathMove[], resultPaths?: {x:number,y:number,z:number}[][], resultTotalDepth?: number, resultBottomZ?: number, resultContourInside?: boolean, resultPathsWithDepth?: {path:{x:number,y:number,z:number}[], topZ:number, bottomZ:number}[], resultBounds?: {minX:number,maxX:number,minY:number,maxY:number}, toolDiameter?: number, dxfSupportMoveStart?: number, dxfSupportPauseIndex?: number, dxfSupportHolePoints?: {x:number,y:number}[], dxfSupportHoleDiameter?: number }} Toolpath
  */
 
 const DEFAULT_SAFE_Z = 10; // mm, standaard veilige hoogte (overschrijfbaar via formulier)
@@ -3405,10 +3405,11 @@ function getResultShapePathsRaw(params) {
  * Voeg support-gaten toe aan het toolpath (DXF), vóór de contourbewerking.
  * @param {ToolpathMove[]} moves
  * @param {*} params
+ * @returns {{ supportMoveStart: number, pauseMoveIndex: number|null, holePoints: {x:number,y:number}[], holeDiameter: number }|null}
  */
 function appendDxfSupportHolesMoves(moves, params) {
   const support = params.dxfSupportHoles;
-  if (!support?.enabled || !support.points?.length) return;
+  if (!support?.enabled || !support.points?.length) return null;
 
   const cutParams = params.cutParams;
   const safeZ = cutParams.safeHeight;
@@ -3425,7 +3426,8 @@ function appendDxfSupportHolesMoves(moves, params) {
     return a.x - b.x;
   });
 
-  const supportStartIdx = moves.length;
+  const supportMoveStart = moves.length;
+  let pauseMoveIndex = null;
 
   sortedPoints.forEach((pt, idx) => {
     let path;
@@ -3448,7 +3450,7 @@ function appendDxfSupportHolesMoves(moves, params) {
         cutParams,
         false,
         entryMethod,
-        supportStartIdx === 0 && idx === 0 && depthIndex === 0,
+        supportMoveStart === 0 && idx === 0 && depthIndex === 0,
         safeZ,
         undefined,
         false,
@@ -3467,8 +3469,9 @@ function appendDxfSupportHolesMoves(moves, params) {
     }
   });
 
-  if (support.pauseAfter && moves.length > supportStartIdx) {
+  if (support.pauseAfter && moves.length > supportMoveStart) {
     const last = moves[moves.length - 1];
+    pauseMoveIndex = moves.length;
     moves.push({
       x: last?.x ?? 0,
       y: last?.y ?? 0,
@@ -3476,6 +3479,30 @@ function appendDxfSupportHolesMoves(moves, params) {
       type: "pause",
     });
   }
+
+  return {
+    supportMoveStart,
+    pauseMoveIndex,
+    holePoints: sortedPoints.map((p) => ({ x: p.x, y: p.y })),
+    holeDiameter,
+  };
+}
+
+/**
+ * @param {{ supportMoveStart: number, pauseMoveIndex: number|null, holePoints: {x:number,y:number}[], holeDiameter: number }|null} supportMeta
+ * @param {{ shiftX: number, shiftY: number, zOffset: number, zOriginMode: string }} shift
+ * @param {number} totalDepth
+ */
+function buildDxfSupportPreviewFields(supportMeta, shift, totalDepth) {
+  if (!supportMeta) return {};
+  const holePoints = supportMeta.holePoints.map((p) => ({ x: p.x, y: p.y, z: 0 }));
+  applyOriginTransformToPoints(holePoints, shift.shiftX, shift.shiftY, shift.zOffset, shift.zOriginMode, totalDepth);
+  return {
+    dxfSupportMoveStart: supportMeta.supportMoveStart,
+    dxfSupportPauseIndex: supportMeta.pauseMoveIndex,
+    dxfSupportHolePoints: holePoints.map((p) => ({ x: p.x, y: p.y })),
+    dxfSupportHoleDiameter: supportMeta.holeDiameter,
+  };
 }
 
 /**
@@ -3636,7 +3663,7 @@ function generateToolpath(params) {
   if (shape === ShapeType.DXF) {
     const dxfContours = params.dxfContours;
     if (!dxfContours || dxfContours.length === 0) return { moves: [] };
-    appendDxfSupportHolesMoves(moves, params);
+    const supportMeta = appendDxfSupportHolesMoves(moves, params);
     const entryMethod = effectiveEntryMethod(shape, params.contourType, params.letterMode, cutParams.entryMethod);
     const safeZ = cutParams.safeHeight;
 
@@ -3822,10 +3849,15 @@ function generateToolpath(params) {
         resultContourInside,
         resultBounds,
         toolDiameter: isDxfEngraving ? 0 : cutParams.toolDiameter,
+        ...buildDxfSupportPreviewFields(supportMeta, shift, cutParams.totalDepth),
       };
     }
     const isDxfEngraving = normalizeContourType(params.contourType) === "engraving";
-    return { moves, toolDiameter: isDxfEngraving ? 0 : cutParams.toolDiameter };
+    return {
+      moves,
+      toolDiameter: isDxfEngraving ? 0 : cutParams.toolDiameter,
+      ...buildDxfSupportPreviewFields(supportMeta, shift, cutParams.totalDepth),
+    };
   }
 
   // Bout met verzonken kop: eerst verzinking (kop-gat), dan boutgat
@@ -6970,6 +7002,16 @@ function renderPreview(toolpath, canvas, viewMode = currentPreviewView, cursorCo
   }
 
   // Toolpath tekenen
+  const supportMoveStart = Number.isFinite(toolpath.dxfSupportMoveStart) ? toolpath.dxfSupportMoveStart : -1;
+  const supportPauseIndex = Number.isFinite(toolpath.dxfSupportPauseIndex) ? toolpath.dxfSupportPauseIndex : -1;
+
+  function isSupportPhaseMove(index, move) {
+    if (supportMoveStart < 0 || index < supportMoveStart) return false;
+    if (move.type === "pause") return false;
+    if (supportPauseIndex >= 0 && index >= supportPauseIndex) return false;
+    return true;
+  }
+
   let last = null;
   for (let i = 0; i < toolpath.moves.length; i++) {
     const m = toolpath.moves[i];
@@ -7000,24 +7042,72 @@ function renderPreview(toolpath, canvas, viewMode = currentPreviewView, cursorCo
         const startAngle = Math.atan2(startC.y - centerC.y, startC.x - centerC.x);
         const endAngle = Math.atan2(p.y - centerC.y, p.x - centerC.x);
         ctx.arc(centerC.x, centerC.y, r, startAngle, endAngle, !m.clockwise);
-        ctx.strokeStyle = "#38bdf8";
+        ctx.strokeStyle = isSupportPhaseMove(i, m) ? "#f472b6" : "#38bdf8";
         ctx.setLineDash([]);
         ctx.lineWidth = 2;
       } else {
         ctx.lineTo(p.x, p.y);
         if (m.type === "rapid") {
-          ctx.strokeStyle = "#f97316";
+          ctx.strokeStyle = isSupportPhaseMove(i, m) ? "#fb923c" : "#f97316";
           ctx.setLineDash([6, 4]);
           ctx.lineWidth = 1.5;
         } else {
-          ctx.strokeStyle = "#38bdf8";
+          ctx.strokeStyle = isSupportPhaseMove(i, m) ? "#f472b6" : "#38bdf8";
           ctx.setLineDash([]);
-          ctx.lineWidth = 2;
+          ctx.lineWidth = isSupportPhaseMove(i, m) ? 2.5 : 2;
         }
       }
       ctx.stroke();
     }
     last = p;
+  }
+
+  // Support-gaten en pauze-marker (top view)
+  if (viewMode === PreviewViewMode.TOP && supportMoveStart >= 0) {
+    ctx.save();
+    if (toolpath.dxfSupportHolePoints?.length && Number.isFinite(toolpath.dxfSupportHoleDiameter)) {
+      const holeR = toolpath.dxfSupportHoleDiameter / 2;
+      ctx.fillStyle = "rgba(244, 114, 182, 0.18)";
+      ctx.strokeStyle = "rgba(244, 114, 182, 0.75)";
+      ctx.lineWidth = 1;
+      toolpath.dxfSupportHolePoints.forEach((pt) => {
+        const center = toCanvas(projectPoint(pt.x - cx, pt.y - cy, (cz - 0) * DEPTH_SCALE));
+        const edge = toCanvas(projectPoint(pt.x + holeR - cx, pt.y - cy, (cz - 0) * DEPTH_SCALE));
+        const rPx = Math.max(3, Math.abs(edge.x - center.x));
+        ctx.beginPath();
+        ctx.arc(center.x, center.y, rPx, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      });
+    }
+    if (supportPauseIndex >= 0 && toolpath.moves[supportPauseIndex]) {
+      const pauseMove = toolpath.moves[supportPauseIndex];
+      const pauseCanvas = toCanvas(projectPoint(
+        pauseMove.x - cx,
+        pauseMove.y - cy,
+        (cz - pauseMove.z) * DEPTH_SCALE
+      ));
+      ctx.strokeStyle = "#facc15";
+      ctx.fillStyle = "rgba(250, 204, 21, 0.25)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      const s = 10;
+      ctx.beginPath();
+      ctx.moveTo(pauseCanvas.x, pauseCanvas.y - s);
+      ctx.lineTo(pauseCanvas.x + s, pauseCanvas.y);
+      ctx.lineTo(pauseCanvas.x, pauseCanvas.y + s);
+      ctx.lineTo(pauseCanvas.x - s, pauseCanvas.y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#facc15";
+      ctx.font = "bold 11px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText("M0", pauseCanvas.x, pauseCanvas.y - s - 4);
+    }
+    ctx.restore();
   }
 
   // Origin markeren (0,0)
@@ -7328,6 +7418,46 @@ function renderPreview(toolpath, canvas, viewMode = currentPreviewView, cursorCo
 
     ctx.restore();
   }
+
+  if (supportMoveStart >= 0) {
+    const isLightTheme = typeof document !== "undefined" && document.body?.dataset.theme === "light";
+    ctx.save();
+    ctx.font = "11px system-ui, sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "top";
+    const legendX = 10;
+    let legendY = 10;
+    const lineH = 16;
+    ctx.fillStyle = isLightTheme ? "rgba(255,255,255,0.92)" : "rgba(15,23,42,0.82)";
+    ctx.fillRect(legendX - 6, legendY - 4, 168, supportPauseIndex >= 0 ? 70 : 54);
+    ctx.fillStyle = isLightTheme ? "#334155" : "#e2e8f0";
+    ctx.fillRect(legendX, legendY + 4, 14, 3);
+    ctx.fillStyle = isLightTheme ? "#64748b" : "#cbd5e1";
+    ctx.fillText(t("preview.legendSupportHoles"), legendX + 20, legendY);
+    legendY += lineH;
+    ctx.strokeStyle = "#38bdf8";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(legendX, legendY + 6);
+    ctx.lineTo(legendX + 14, legendY + 6);
+    ctx.stroke();
+    ctx.fillStyle = isLightTheme ? "#64748b" : "#cbd5e1";
+    ctx.fillText(t("preview.legendDxfCut"), legendX + 20, legendY);
+    if (supportPauseIndex >= 0) {
+      legendY += lineH;
+      ctx.fillStyle = "#facc15";
+      ctx.beginPath();
+      ctx.moveTo(legendX + 7, legendY);
+      ctx.lineTo(legendX + 14, legendY + 7);
+      ctx.lineTo(legendX + 7, legendY + 14);
+      ctx.lineTo(legendX, legendY + 7);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = isLightTheme ? "#64748b" : "#cbd5e1";
+      ctx.fillText(t("preview.legendPauseM0"), legendX + 20, legendY);
+    }
+    ctx.restore();
+  }
 }
 
 /**
@@ -7584,7 +7714,25 @@ function renderDxfSupportCanvas() {
     ctx.stroke();
   });
 
-  dxfSupportPopupPoints.forEach((pt) => {
+  if (dxfSupportPopupPoints.length > 1) {
+    const sorted = [...dxfSupportPopupPoints].sort((a, b) => {
+      if (Math.abs(a.y - b.y) > 1e-6) return a.y - b.y;
+      return a.x - b.x;
+    });
+    ctx.strokeStyle = "rgba(251, 146, 60, 0.85)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([8, 6]);
+    ctx.beginPath();
+    sorted.forEach((pt, idx) => {
+      const { sx, sy } = dxfSupportWorldToScreen(pt.x, pt.y, view);
+      if (idx === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  dxfSupportPopupPoints.forEach((pt, index) => {
     const { sx, sy } = dxfSupportWorldToScreen(pt.x, pt.y, view);
     const rPx = holeRadiusMm > 0 ? holeRadiusMm * view.scale : 6;
     ctx.beginPath();
@@ -7604,6 +7752,11 @@ function renderDxfSupportCanvas() {
     ctx.beginPath();
     ctx.arc(sx, sy, 4, 0, Math.PI * 2);
     ctx.fill();
+    ctx.fillStyle = "#f8fafc";
+    ctx.font = "bold 11px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(index + 1), sx, sy);
   });
 
   updateDxfSupportPopupCount();
@@ -7662,9 +7815,60 @@ function closeDxfSupportPopup(save) {
   overlay.classList.add("hidden");
 }
 
+function activateTopPreviewIfSupportHoles(toolpath) {
+  if (!toolpath || !Number.isFinite(toolpath.dxfSupportMoveStart) || toolpath.dxfSupportMoveStart < 0) return;
+  currentPreviewView = PreviewViewMode.TOP;
+  document.querySelectorAll(".preview-view-btn").forEach((btn) => {
+    btn.classList.toggle("preview-view-btn--active", btn.getAttribute("data-view") === "top");
+  });
+}
+
+async function previewDxfSupportInToolpath() {
+  const errorMessage = document.getElementById("error-message");
+  const previewCanvas = /** @type {HTMLCanvasElement|null} */ (document.getElementById("preview-canvas"));
+  try {
+    const raw = readInputsFromForm();
+    if (raw.shape !== ShapeType.DXF) return;
+    const support = readDxfSupportHolesFromForm();
+    if (!support.enabled) {
+      if (errorMessage) errorMessage.textContent = t("dxfSupport.previewNeedsEnabled");
+      return;
+    }
+    if (!support.points.length) {
+      if (errorMessage) errorMessage.textContent = t("error.dxfSupportNoPoints");
+      return;
+    }
+    const text = await getActiveDxfTextForSupport();
+    if (!text) {
+      if (errorMessage) errorMessage.textContent = t("dxfSupport.noDxf");
+      return;
+    }
+    const dxfOrientation = Number(document.getElementById("dxf-orientation")?.value) || 0;
+    const orientedContours = getOrientedDxfContoursFromText(text, dxfOrientation);
+    applyDxfOriginToRaw(raw, orientedContours);
+    const validation = validateInputs(raw);
+    if (!validation.ok) {
+      if (errorMessage) errorMessage.textContent = validation.errors.join(" ");
+      return;
+    }
+    const toolpath = generateToolpath(validation.params);
+    lastToolpath = toolpath;
+    activateTopPreviewIfSupportHoles(toolpath);
+    document.getElementById("preview-reset-btn")?.click();
+    if (previewCanvas) {
+      renderPreview(toolpath, previewCanvas, PreviewViewMode.TOP, null);
+      previewCanvas.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    if (errorMessage) errorMessage.textContent = "";
+  } catch (err) {
+    if (errorMessage) errorMessage.textContent = err instanceof Error ? err.message : String(err);
+  }
+}
+
 function initDxfSupportUI() {
   const enabledCb = document.getElementById("dxf-support-holes-enabled");
   const openBtn = document.getElementById("dxf-support-open-btn");
+  const previewBtn = document.getElementById("dxf-support-preview-btn");
   const undoBtn = document.getElementById("dxf-support-undo-btn");
   const clearBtn = document.getElementById("dxf-support-clear-btn");
   const doneBtn = document.getElementById("dxf-support-done-btn");
@@ -7694,6 +7898,7 @@ function initDxfSupportUI() {
     });
   }
   if (openBtn) openBtn.addEventListener("click", () => { openDxfSupportPopup(); });
+  if (previewBtn) previewBtn.addEventListener("click", () => { previewDxfSupportInToolpath(); });
   if (undoBtn) {
     undoBtn.addEventListener("click", () => {
       dxfSupportPopupPoints.pop();
@@ -8235,6 +8440,10 @@ function mergeChainToolpaths(stepResults) {
     resultContourInside: last.resultContourInside,
     resultBounds: last.resultBounds,
     toolDiameter: last.toolDiameter,
+    dxfSupportMoveStart: last.dxfSupportMoveStart,
+    dxfSupportPauseIndex: last.dxfSupportPauseIndex,
+    dxfSupportHolePoints: last.dxfSupportHolePoints,
+    dxfSupportHoleDiameter: last.dxfSupportHoleDiameter,
   };
 }
 
@@ -10240,6 +10449,19 @@ function setupUI() {
   function playbackTick() {
     if (!isPlaying || !lastToolpath.moves.length) return;
     const elapsedMs = (Date.now() - playbackStartTime) * playbackSpeedMultiplier;
+    if (
+      Number.isFinite(lastToolpath.dxfSupportPauseIndex) &&
+      lastToolpath.dxfSupportPauseIndex >= 0 &&
+      playbackCumulativeTimesMs.length > lastToolpath.dxfSupportPauseIndex &&
+      elapsedMs >= playbackCumulativeTimesMs[lastToolpath.dxfSupportPauseIndex] - 1
+    ) {
+      playbackElapsedMs = playbackCumulativeTimesMs[lastToolpath.dxfSupportPauseIndex];
+      stopPlayback();
+      syncGcodeCursorToPlayback();
+      if (previewCanvas) renderPreview(lastToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
+      updatePlaybackButtonsState();
+      return;
+    }
     if (elapsedMs >= playbackTotalDurationMs) {
       playbackElapsedMs = playbackTotalDurationMs;
       stopPlayback();
@@ -10492,7 +10714,10 @@ function setupUI() {
             time: formatEstimatedTime(totalMinutes),
           });
         }
-        if (previewCanvas) renderPreview(mergedToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
+        if (previewCanvas) {
+          activateTopPreviewIfSupportHoles(mergedToolpath);
+          renderPreview(mergedToolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
+        }
 
         saveLastSettings();
         lastGenerationSnapshot = getParamsSnapshotReadOnly();
@@ -10586,7 +10811,10 @@ function setupUI() {
           time: formatEstimatedTime(est.totalMinutes),
         });
       }
-      if (previewCanvas) renderPreview(toolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
+      if (previewCanvas) {
+        activateTopPreviewIfSupportHoles(toolpath);
+        renderPreview(toolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
+      }
 
       saveLastSettings();
       lastGenerationSnapshot = getParamsSnapshotReadOnly();
