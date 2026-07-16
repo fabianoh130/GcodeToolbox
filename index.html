@@ -125,8 +125,7 @@
                 <option value="counterbore_bolt" data-i18n="form.shapeCounterboreBolt">Verzinkboring</option>
                 <option value="thread_milling" data-i18n="form.shapeThreadMilling">Draadfrezen</option>
                 <option value="hole_pattern" data-i18n="form.shapePatternedHoles">Patroongaten</option>
-                <option value="dxf" data-i18n="form.shapeDxf">DXF (contouren)</option>
-                <option value="svg" data-i18n="form.shapeSvg">SVG (contouren)</option>
+                <option value="vector_import" data-i18n="form.shapeVector">DXF/SVG (contouren)</option>
               </select>
             </div>
             <div id="hole-pattern-layout-row" class="field-row hole-pattern-only hidden">
@@ -512,35 +511,16 @@
                 </div>
               </div>
 
-              <div class="field-row shape-field shape-dxf hidden">
-                <label for="dxf-file" data-i18n="form.dxfFile">DXF-bestand</label>
+              <div class="field-row shape-field shape-vector hidden">
+                <label for="vector-file" data-i18n="form.vectorFile">DXF- of SVG-bestand</label>
                 <div class="dxf-file-wrapper">
-                  <input type="file" id="dxf-file" accept=".dxf" class="dxf-file-input" />
-                  <label for="dxf-file" class="dxf-file-btn" data-i18n="form.dxfFileChoose">Bestand kiezen</label>
-                  <span class="dxf-file-name" id="dxf-file-name"></span>
+                  <input type="file" id="vector-file" accept=".dxf,.svg,image/svg+xml" class="dxf-file-input" />
+                  <label for="vector-file" class="dxf-file-btn" data-i18n="form.vectorFileChoose">Bestand kiezen</label>
+                  <span class="dxf-file-name" id="vector-file-name"></span>
                 </div>
-                <p class="field-hint" data-i18n="form.dxfFileHint">Kies een .dxf-bestand. Gesloten contouren (lijnen, polylines, cirkels, bogen) worden herkend en uitgefreesd.</p>
-              </div>
-              <div class="field-row shape-field shape-dxf hidden">
-                <label for="dxf-orientation" data-i18n="form.dxfOrientation">Orientatie</label>
-                <select id="dxf-orientation" name="dxf-orientation">
-                  <option value="0" data-i18n="form.dxfOrientation0">Normaal (0°)</option>
-                  <option value="90" data-i18n="form.dxfOrientation90">90° rechts (met de klok mee)</option>
-                  <option value="-90" data-i18n="form.dxfOrientationMinus90">90° links (tegen de klok in)</option>
-                  <option value="180" data-i18n="form.dxfOrientation180">180° (ondersteboven)</option>
-                </select>
-              </div>
-
-              <div class="field-row shape-field shape-svg hidden">
-                <label for="svg-file" data-i18n="form.svgFile">SVG-bestand</label>
-                <div class="dxf-file-wrapper">
-                  <input type="file" id="svg-file" accept=".svg,image/svg+xml" class="dxf-file-input" />
-                  <label for="svg-file" class="dxf-file-btn" data-i18n="form.svgFileChoose">Bestand kiezen</label>
-                  <span class="dxf-file-name" id="svg-file-name"></span>
-                </div>
-                <p class="field-hint" data-i18n="form.svgFileHint">Kies een .svg-bestand. Gesloten contouren (path, polygon, cirkel, rechthoek) worden herkend en uitgefreesd.</p>
+                <p class="field-hint" data-i18n="form.vectorFileHint">Kies een .dxf- of .svg-bestand. Gesloten contouren worden automatisch herkend.</p>
                 <div class="svg-sample-links">
-                  <p class="field-hint" data-i18n="form.svgSamplesTitle">Testbestanden (download en laad opnieuw):</p>
+                  <p class="field-hint" data-i18n="form.svgSamplesTitle">SVG-testbestanden (download en laad opnieuw):</p>
                   <ul class="svg-sample-list">
                     <li><a href="samples/svg/simple-rect.svg" download="simple-rect.svg">simple-rect.svg</a></li>
                     <li><a href="samples/svg/circle.svg" download="circle.svg">circle.svg</a></li>
@@ -551,13 +531,13 @@
                   <p class="field-hint svg-local-hint"><span data-i18n="form.svgLocalTestHint">Lokaal testen: run ./scripts/serve-local.sh en open localhost:8080.</span> <a href="http://localhost:8080" target="_blank" rel="noopener">→ localhost:8080</a></p>
                 </div>
               </div>
-              <div class="field-row shape-field shape-svg hidden">
-                <label for="svg-orientation" data-i18n="form.svgOrientation">Orientatie</label>
-                <select id="svg-orientation" name="svg-orientation">
-                  <option value="0" data-i18n="form.svgOrientation0">Normaal (0°)</option>
-                  <option value="90" data-i18n="form.svgOrientation90">90° rechts (met de klok mee)</option>
-                  <option value="-90" data-i18n="form.svgOrientationMinus90">90° links (tegen de klok in)</option>
-                  <option value="180" data-i18n="form.svgOrientation180">180° (ondersteboven)</option>
+              <div class="field-row shape-field shape-vector hidden">
+                <label for="vector-orientation" data-i18n="form.vectorOrientation">Orientatie</label>
+                <select id="vector-orientation" name="vector-orientation">
+                  <option value="0" data-i18n="form.vectorOrientation0">Normaal (0°)</option>
+                  <option value="90" data-i18n="form.vectorOrientation90">90° rechts (met de klok mee)</option>
+                  <option value="-90" data-i18n="form.vectorOrientationMinus90">90° links (tegen de klok in)</option>
+                  <option value="180" data-i18n="form.vectorOrientation180">180° (ondersteboven)</option>
                 </select>
               </div>
             </div>

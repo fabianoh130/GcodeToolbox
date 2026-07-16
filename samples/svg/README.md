@@ -14,7 +14,7 @@ Open daarna in je browser:
 
 **http://localhost:8080**
 
-1. Kies **SVG (contouren)** als operatietype
+1. Kies **DXF/SVG (contouren)** als operatietype
 2. Klik **Bestand kiezen** en selecteer een bestand uit `samples/svg/`
 3. Klik **Genereer** en bekijk de preview
 
