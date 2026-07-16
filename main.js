@@ -7846,13 +7846,26 @@ function activateTopPreviewIfSupportHoles(toolpath) {
   });
 }
 
-function showGeneratedToolpathPreview(toolpath, previewCanvas, getDisplayedColumn) {
+function showGeneratedToolpathPreview(toolpath, previewCanvas, cursorColumn = null) {
   if (!previewCanvas) return;
   activateTopPreviewIfSupportHoles(toolpath);
-  renderPreview(toolpath, previewCanvas, currentPreviewView, getDisplayedColumn());
+  renderPreview(toolpath, previewCanvas, currentPreviewView, cursorColumn);
   if (Number.isFinite(toolpath.dxfSupportMoveStart) && toolpath.dxfSupportMoveStart >= 0) {
     previewCanvas.closest(".preview-canvas-wrap")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
+}
+
+function resetDxfSupportToDefaults() {
+  const enabledCb = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-support-holes-enabled"));
+  const pauseCb = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-support-pause-after"));
+  const diameterInput = /** @type {HTMLInputElement|null} */ (document.getElementById("dxf-support-holes-diameter"));
+  if (enabledCb) enabledCb.checked = false;
+  if (pauseCb) pauseCb.checked = true;
+  if (diameterInput) diameterInput.value = "";
+  setCurrentDxfSupportPoints([], true);
+  syncDxfSupportHoleDiameterFromTool(true);
+  updateDxfSupportSettingsVisibility();
+  updateDxfSupportOpenButton();
 }
 
 function initDxfSupportUI() {
@@ -7949,7 +7962,7 @@ function initDxfSupportUI() {
       const file = dxfFileInput.files?.[0];
       if (!file) {
         dxfLoadedTextForSupport = null;
-        clearDxfSupportPoints(false);
+        resetDxfSupportToDefaults();
         return;
       }
       try {
@@ -7960,9 +7973,11 @@ function initDxfSupportUI() {
           r.readAsText(file);
         });
         dxfLoadedTextForSupport = text;
-        clearDxfSupportPoints(true);
+        resetDxfSupportToDefaults();
+        if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
       } catch (_) {
         dxfLoadedTextForSupport = null;
+        resetDxfSupportToDefaults();
       }
     });
   }
