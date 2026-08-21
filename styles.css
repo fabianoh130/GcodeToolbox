@@ -1836,6 +1836,47 @@ body[data-display-mode="simple"] #gcode-form [data-mode="advanced"] {
     flex-wrap: wrap;
   }
 
+  /* Hints aligned to the label column overflow on narrow screens */
+  #stepover-mm-hint,
+  #entry-speed-hint,
+  #facing-even-spacing-hint {
+    flex-basis: 100%;
+    width: 100%;
+    max-width: 100%;
+    margin-left: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .patterned-holes-label-spacer {
+    display: none;
+  }
+
+  .patterned-holes-total-hint {
+    flex-basis: 100%;
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .finishing-speed-override-control {
+    flex-wrap: wrap;
+  }
+
+  #finishing-pass-speed-override-hint {
+    flex-basis: 100%;
+    width: 100%;
+  }
+
+  .chain-steps-bar {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .chain-baseline-hint {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
 }
 /* Light theme overrides */
 body.theme-light {
