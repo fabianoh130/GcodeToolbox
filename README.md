@@ -33,6 +33,9 @@ This project was created out of my own need for a practical toolbox, and I want 
 
 # Version
 
+## 4.3
+* Fixed form UI not fully refreshing when switching between steps in chained operations (e.g. shape submenu not updating)
+
 ## 4.2
 * SVG contour import (same pipeline as DXF)
 * DXF support screw holes — place extra holes on a top-view canvas with a pause to screw down your stock for better support.

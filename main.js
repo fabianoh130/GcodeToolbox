@@ -8648,6 +8648,8 @@ function initDxfSupportUI() {
 let chainJobSteps = [];
 /** @type {string|null} */
 let chainActiveStepId = null;
+/** @type {(() => void) | null} */
+let syncFormUIFromChainStep = null;
 
 /** Formuliervelden die per stap worden opgeslagen. */
 const CHAIN_CAPTURE_FIELD_IDS = [
@@ -8948,15 +8950,11 @@ function loadChainStepToForm(stepId) {
     applyBaselineFieldsToFormState(step.formState, extractBaselineFieldsFromFormState(chainJobSteps[0].formState));
   }
   applyFormStateForChain(step.formState);
-  if (typeof updateUIForOperationTypeAndShape === "function") updateUIForOperationTypeAndShape();
-  if (typeof updateContourTypeVisibility === "function") updateContourTypeVisibility();
-  if (typeof updateStepoverHint === "function") updateStepoverHint();
-  if (typeof updateEntrySpeedLabel === "function") updateEntrySpeedLabel();
-  if (typeof updateEntrySpeedHint === "function") updateEntrySpeedHint();
-  if (typeof updateToolDiameterVisibility === "function") updateToolDiameterVisibility();
+  const vectorFileNameEl = document.getElementById("vector-file-name");
+  if (vectorFileNameEl) vectorFileNameEl.textContent = step.dxfFileName || "";
+  syncFormUIFromChainStep?.();
   updateChainFieldLocks();
   renderChainStepsBar();
-  if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
 }
 
 async function selectChainStep(stepId) {
@@ -11615,6 +11613,22 @@ function setupUI() {
   });
 
   // init defaults
+  syncFormUIFromChainStep = () => {
+    const selected = getEffectiveShape();
+    updateUIForOperationTypeAndShape._prevShape = selected;
+    updateUIForOperationTypeAndShape();
+    updateContourTypeVisibility();
+    updateStepoverHint();
+    updateEntrySpeedLabel();
+    updateEntrySpeedHint();
+    updateToolDiameterVisibility();
+    updateEntryMethodForEngraving();
+    updatePlungePeckingVisibility();
+    updateFacingEvenSpacingHint();
+    updatePatternedHolesTotalHint();
+    updateRampInputsDisabled();
+    updateRegenerateIndicator();
+  };
   updateUIForOperationTypeAndShape();
   restoreLastSettings();
   initChainModeOnStartup(true);
