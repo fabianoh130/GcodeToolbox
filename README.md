@@ -33,6 +33,9 @@ This project was created out of my own need for a practical toolbox, and I want 
 
 # Version
 
+## 4.3.1
+* Fixed hints overflowing off-screen on mobile (stepover, entry speed, facing, chain baseline)
+
 ## 4.3
 * Fixed form UI not fully refreshing when switching between steps in chained operations (e.g. shape submenu not updating)
 
