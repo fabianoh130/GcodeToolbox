@@ -33,6 +33,9 @@ This project was created out of my own need for a practical toolbox, and I want 
 
 # Version
 
+## 4.3.3
+* Bust browser cache for JS/CSS on each release so GitHub Pages updates are picked up immediately
+
 ## 4.3.2
 * Fixed facing stepover resetting to 100% on generate (stepover unit toggle re-converted % values as mm)
 
