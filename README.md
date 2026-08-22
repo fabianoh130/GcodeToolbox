@@ -33,6 +33,9 @@ This project was created out of my own need for a practical toolbox, and I want 
 
 # Version
 
+## 4.3.4
+* Fixed contour tabs only being cut on the final depth pass when using ramp entry or multiple stepdowns
+
 ## 4.3.3
 * Bust browser cache for JS/CSS on each release so GitHub Pages updates are picked up immediately
 

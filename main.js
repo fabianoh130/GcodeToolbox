@@ -3412,6 +3412,11 @@ function buildTabConfig(path, interval, width, totalDepth, tabHeight) {
   };
 }
 
+/** @param {{enabled?:boolean,tabZ?:number}|null} tabConfig @param {number} depthZ */
+function isTabLayerActive(tabConfig, depthZ) {
+  return !!(tabConfig && tabConfig.enabled && depthZ < tabConfig.tabZ + 1e-6);
+}
+
 /**
  * Berekent Z voor een punt op het pad bij tabs: 25% van tabbreedte ramp omhoog, 50% vlak, 25% ramp omlaag.
  * @param {number} s - cumulatieve afstand langs het pad (mm), binnen [0, totalLengthClosed]
@@ -4206,8 +4211,9 @@ function generateToolpath(params) {
         if (tabs && tabs.enabled) {
           tabConfig = buildTabConfig(contourPath, tabs.interval, tabs.width, cutParams.totalDepth, tabs.height);
         }
-        depths.forEach((depthZ) => {
-          addLayerForPath(moves, contourPath, depthZ, cutParams, plungeOutside, entryMethod, true, safeZ, tabConfig, contourType === "inside", false, toolRadius);
+        depths.forEach((depthZ, depthIndex) => {
+          const isLastLayer = depthIndex === depths.length - 1;
+          addLayerForPath(moves, contourPath, depthZ, cutParams, plungeOutside, entryMethod, true, safeZ, tabConfig, contourType === "inside", false, toolRadius, isLastLayer);
         });
       } else {
         const contoursWithArea = dxfContours.map((path) => {
@@ -4218,7 +4224,8 @@ function generateToolpath(params) {
         const maxAbsArea = Math.max(...contoursWithArea.map((c) => c.absArea));
         // Sorteer: binnencontouren eerst, buitencontour (grootste) als laatste, zodat alle contouren dezelfde tab-logica gebruiken
         contoursWithArea.sort((a, b) => a.absArea - b.absArea);
-        depths.forEach((depthZ) => {
+        depths.forEach((depthZ, depthIndex) => {
+          const isLastLayer = depthIndex === depths.length - 1;
           contoursWithArea.forEach(({ path }, idx) => {
             if (idx > 0) {
               const last = moves[moves.length - 1];
@@ -4235,7 +4242,7 @@ function generateToolpath(params) {
             }
             const useTabConfig = tabs && tabs.enabled ? buildTabConfig(offsetPath, tabs.interval, tabs.width, cutParams.totalDepth, tabs.height) : null;
             const allowContinuing = contoursWithArea.length <= 1;
-            addLayerForPath(moves, offsetPath, depthZ, cutParams, plungeOutside && idx === 0, entryMethod, idx === 0, safeZ, useTabConfig, contourInside, false, toolRadius, true, undefined, undefined, undefined, allowContinuing);
+            addLayerForPath(moves, offsetPath, depthZ, cutParams, plungeOutside && idx === 0, entryMethod, idx === 0, safeZ, useTabConfig, contourInside, false, toolRadius, isLastLayer, undefined, undefined, undefined, allowContinuing);
           });
         });
       }
@@ -5905,12 +5912,13 @@ function addLayerForPath(
     }
   }
 
-  /** Pad niet nogmaals: bij RAMP op tussenlaag alleen ramp (geen contour); bij plunge altijd contour per laag.
+  /** Pad niet nogmaals: bij RAMP op tussenlaag alleen ramp (geen contour), tenzij tabs actief zijn op deze diepte.
    * Uitzondering: bij insteken buiten doen we wél de volledige contour op elke laag (meerdere rechthoeken). */
   let pathAlreadyAtDepth = false;
   /** Bij contour ramp + insteken buiten: na ramp+lead-in staan we al op path[0], dus die niet dubbel toevoegen. */
   let skipFirstPathPoint = false;
-  if (entryMethod === EntryMethod.RAMP && !isLastLayer && !plungeOutside) {
+  const tabsActiveThisLayer = isTabLayerActive(tabConfig, depthZ);
+  if (entryMethod === EntryMethod.RAMP && !isLastLayer && !plungeOutside && !tabsActiveThisLayer) {
     pathAlreadyAtDepth = true;
   }
 
@@ -6258,7 +6266,7 @@ function addLayerForPath(
                 pushContourCut(rampEndPoint.x, rampEndPoint.y, zEnd);
               }
             }
-          } else {
+          } else if (!tabsActiveThisLayer) {
             for (let s = rampEndSeg; s < n; s++) {
               pushContourCut(path[s].x, path[s].y, depthZ);
             }
