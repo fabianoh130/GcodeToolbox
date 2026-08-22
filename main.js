@@ -264,6 +264,66 @@ const DEFAULT_PLUNGE_PECK_RETRACT_MM = 1;
 /** @type {"percent"|"feed"} */
 let entrySpeedUnitMemory = "percent";
 
+/** @type {"percent"|"mm"} */
+let stepoverUnitMemory = "percent";
+
+/**
+ * Past min/max/step van het stepover-veld aan zonder de waarde te wijzigen.
+ * @param {"percent"|"mm"} unit
+ */
+function syncStepoverInputConstraints(unit) {
+  const stepoverInput = /** @type {HTMLInputElement | null} */ (document.getElementById("stepover"));
+  const stepoverWrapper = document.getElementById("stepover-input-wrapper");
+  const toolDiameterInput = /** @type {HTMLInputElement | null} */ (document.getElementById("tool-diameter"));
+  if (!stepoverInput || !stepoverWrapper) return;
+  if (unit === "mm") {
+    const d = toolDiameterInput ? toNumber(toolDiameterInput.value) : NaN;
+    const max = Number.isFinite(d) && d > 0 ? d : 6;
+    stepoverInput.min = "0";
+    stepoverInput.max = String(max);
+    stepoverInput.step = "any";
+    stepoverWrapper.setAttribute("data-step", "0.5");
+    stepoverWrapper.setAttribute("data-min", "0");
+    stepoverWrapper.setAttribute("data-max", String(max));
+  } else {
+    stepoverInput.min = "1";
+    stepoverInput.max = "100";
+    stepoverInput.step = "any";
+    stepoverWrapper.setAttribute("data-step", "10");
+    stepoverWrapper.setAttribute("data-min", "1");
+    stepoverWrapper.setAttribute("data-max", "100");
+  }
+}
+
+/**
+ * Zet stepover-waarde om bij wisselen tussen % en mm.
+ * @param {"percent"|"mm"} fromUnit
+ * @param {"percent"|"mm"} toUnit
+ */
+function convertStepoverBetweenUnits(fromUnit, toUnit) {
+  if (fromUnit === toUnit) return;
+  const stepoverInput = /** @type {HTMLInputElement | null} */ (document.getElementById("stepover"));
+  const toolDiameterInput = /** @type {HTMLInputElement | null} */ (document.getElementById("tool-diameter"));
+  if (!stepoverInput || !toolDiameterInput) return;
+  const displayUnit = getDisplayUnit();
+  const d = toNumber(toolDiameterInput.value);
+  const toolD = toMm(d, displayUnit);
+  const currentVal = toNumber(stepoverInput.value);
+  if (toUnit === "mm") {
+    const mm = Number.isFinite(currentVal) && Number.isFinite(toolD) && toolD > 0
+      ? (currentVal / 100) * toolD
+      : (Number.isFinite(toolD) && toolD > 0 ? 0.5 * toolD : 3);
+    const showMm = fromMm(mm, displayUnit);
+    stepoverInput.value = String(Math.round(showMm * 100) / 100);
+  } else {
+    const stepoverMm = Number.isFinite(currentVal) ? toMm(currentVal, displayUnit) : NaN;
+    const pct = Number.isFinite(toolD) && toolD > 0 && Number.isFinite(stepoverMm)
+      ? Math.round((stepoverMm / toolD) * 100)
+      : 50;
+    stepoverInput.value = String(Math.min(100, Math.max(1, pct)));
+  }
+}
+
 /**
  * Past min/max/step van het entry-speed veld aan zonder de waarde te wijzigen.
  * @param {"percent"|"feed"} unit
@@ -8781,12 +8841,14 @@ function applyFormStateForChain(formState) {
     if (el.type === "checkbox") el.checked = !!val;
     else el.value = String(val);
   });
+  const targetStepoverUnit = formState.stepoverUnit === "mm" ? "mm" : "percent";
   const stepoverRadio = /** @type {HTMLInputElement|null} */ (
-    document.querySelector(`input[name="stepover-unit"][value="${formState.stepoverUnit || "percent"}"]`)
+    document.querySelector(`input[name="stepover-unit"][value="${targetStepoverUnit}"]`)
   );
   if (stepoverRadio) {
     stepoverRadio.checked = true;
-    stepoverRadio.dispatchEvent(new Event("change", { bubbles: true }));
+    stepoverUnitMemory = targetStepoverUnit;
+    syncStepoverInputConstraints(targetStepoverUnit);
   }
   const entrySpeedRadio = /** @type {HTMLInputElement|null} */ (
     document.querySelector(`input[name="entry-speed-unit"][value="${formState.entrySpeedUnit || "percent"}"]`)
@@ -9969,8 +10031,8 @@ function setupUI() {
         const percentRadio = /** @type {HTMLInputElement | null} */ (document.querySelector('input[name="stepover-unit"][value="percent"]'));
         if (percentRadio) {
           percentRadio.checked = true;
-          // Trigger the unit toggle handler so min/max + wrapper step update correctly
-          percentRadio.dispatchEvent(new Event("change", { bubbles: true }));
+          stepoverUnitMemory = "percent";
+          syncStepoverInputConstraints("percent");
         }
         if (stepoverEl) stepoverEl.value = "90";
         if (typeof updateStepoverHint === "function") updateStepoverHint();
@@ -10697,32 +10759,20 @@ function setupUI() {
   stepoverUnitRadios.forEach((radio) => {
     radio.tabIndex = -1;
     radio.addEventListener("change", () => {
-      if (!stepoverInput || !stepoverWrapper || !toolDiameterInput) return;
-      const d = toNumber(toolDiameterInput.value) || 6;
-      const currentVal = toNumber(stepoverInput.value);
-      if (radio.value === "mm") {
-        const mm = Number.isFinite(currentVal) && d > 0 ? (currentVal / 100) * d : d * 0.5;
-        stepoverInput.value = String(Math.round(mm * 100) / 100);
-        stepoverInput.min = "0";
-        stepoverInput.max = String(d);
-        stepoverInput.step = "any";
-        stepoverWrapper.setAttribute("data-step", "0.5");
-        stepoverWrapper.setAttribute("data-min", "0");
-        stepoverWrapper.setAttribute("data-max", String(d));
-      } else {
-        const pct = d > 0 && Number.isFinite(currentVal) ? Math.round((currentVal / d) * 100) : 50;
-        stepoverInput.value = String(Math.min(100, Math.max(1, pct)));
-        stepoverInput.min = "1";
-        stepoverInput.max = "100";
-        stepoverInput.step = "any";
-        stepoverWrapper.setAttribute("data-step", "10");
-        stepoverWrapper.setAttribute("data-min", "1");
-        stepoverWrapper.setAttribute("data-max", "100");
-      }
+      if (!radio.checked || !stepoverInput || !stepoverWrapper || !toolDiameterInput) return;
+      const newUnit = radio.value === "mm" ? "mm" : "percent";
+      if (newUnit === stepoverUnitMemory) return;
+      convertStepoverBetweenUnits(stepoverUnitMemory, newUnit);
+      stepoverUnitMemory = newUnit;
+      syncStepoverInputConstraints(newUnit);
       updateStepoverHint();
       if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
     });
   });
+  stepoverUnitMemory = /** @type {HTMLInputElement} */ (
+    document.querySelector('input[name="stepover-unit"]:checked')
+  )?.value === "mm" ? "mm" : "percent";
+  syncStepoverInputConstraints(stepoverUnitMemory);
 
   // Stepover-hint: in %-modus tonen we mm of in (d en val zijn altijd in display-eenheid), in mm/in-modus tonen we %
   const stepoverMmHint = document.getElementById("stepover-mm-hint");
