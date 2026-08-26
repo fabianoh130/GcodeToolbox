@@ -33,6 +33,11 @@ This project was created out of my own need for a practical toolbox, and I want 
 
 # Version
 
+## 4.4.2
+* Slot milling is now a shape in the Shape menu (**Slot**) with length, X/Y axis and one-way / both-ways direction
+* Fixed the Square checkbox snapping back on when unchecked
+* Restored drill/line behavior when a pocket or inside contour exactly matches the tool diameter (regression in 4.4.0)
+
 ## 4.4.1
 * Fixed shape fields missing after upgrade when a saved **square** shape was still selected
 * Header version now shows v4.4.1
