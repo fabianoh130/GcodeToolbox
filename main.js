@@ -10116,6 +10116,9 @@ function setupUI() {
     const heightRow = document.getElementById("rect-height-row");
     const widthInput = /** @type {HTMLInputElement | null} */ (document.getElementById("rect-width"));
     const heightInput = /** @type {HTMLInputElement | null} */ (document.getElementById("rect-height"));
+    const squareRow = document.querySelector(".rect-square-row");
+    const isFacing = getEffectiveShape() === ShapeType.FACING;
+    if (squareRow) squareRow.classList.toggle("hidden", isFacing);
     if (!squareCb) return;
     const isSquare = squareCb.checked;
     if (heightRow) heightRow.classList.toggle("hidden", isSquare);
