@@ -33,6 +33,10 @@ This project was created out of my own need for a practical toolbox, and I want 
 
 # Version
 
+## 4.4.1
+* Fixed shape fields missing after upgrade when a saved **square** shape was still selected
+* Header version now shows v4.4.1
+
 ## 4.4.0
 * Merged square and rectangle into one shape with a **Square** checkbox (width links height)
 * New **Slot milling** operation with one-way / both-ways direction (replaces pocket workaround for tool-width grooves)

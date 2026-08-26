@@ -1,5 +1,8 @@
 // main.js - G-code generator voor eenvoudige 2D-vormen
 
+/** App-versie (header + cache-busters in index.html). */
+const APP_VERSION = "4.4.1";
+
 /**
  * Conceptuele enumeraties (stringwaarden in de praktijk).
  */
@@ -644,6 +647,19 @@ function normalizeLegacySquareShape(shape, shapeParams) {
       cornerRadius: shapeParams.cornerRadius ?? 0,
     },
   };
+}
+
+function migrateLegacySquareShapeInForm() {
+  const shapeEl = /** @type {HTMLSelectElement | null} */ (document.getElementById("shape"));
+  if (!shapeEl || shapeEl.value !== ShapeType.SQUARE) return;
+  const squareCb = /** @type {HTMLInputElement | null} */ (document.getElementById("rect-square"));
+  const widthEl = /** @type {HTMLInputElement | null} */ (document.getElementById("rect-width"));
+  const heightEl = /** @type {HTMLInputElement | null} */ (document.getElementById("rect-height"));
+  shapeEl.value = ShapeType.RECTANGLE;
+  if (squareCb) {
+    squareCb.checked = true;
+    if (widthEl && heightEl) heightEl.value = widthEl.value;
+  }
 }
 
 /**
@@ -9463,6 +9479,9 @@ async function copyGcodeToClipboard(gcode) {
  * UI-initialisatie
  */
 function setupUI() {
+  const versionLink = document.querySelector(".app-version");
+  if (versionLink) versionLink.textContent = `v${APP_VERSION}`;
+
   currentLang = getCurrentLang();
   document.documentElement.lang = currentLang;
   applyTranslations();
@@ -10059,7 +10078,8 @@ function setupUI() {
 
   function getEffectiveShape() {
     const opType = operationTypeSelect?.value ?? OperationTypeCategory.SHAPES;
-    return resolveEffectiveShape(opType, shapeSelect?.value ?? ShapeType.CIRCLE);
+    const shape = resolveEffectiveShape(opType, shapeSelect?.value ?? ShapeType.CIRCLE);
+    return shape === ShapeType.SQUARE ? ShapeType.RECTANGLE : shape;
   }
 
   function updateFacingEvenSpacingHint() {
@@ -10128,6 +10148,7 @@ function setupUI() {
   }
 
   function updateUIForOperationTypeAndShape() {
+    migrateLegacySquareShapeInForm();
     const opType = operationTypeSelect?.value ?? OperationTypeCategory.SHAPES;
     const selected = getEffectiveShape();
     const previous = updateUIForOperationTypeAndShape._prevShape;
@@ -10152,6 +10173,7 @@ function setupUI() {
       .forEach((el) => el.classList.add("hidden"));
     const map = {
       [ShapeType.CIRCLE]: ".shape-circle",
+      [ShapeType.SQUARE]: ".shape-rectangle",
       [ShapeType.RECTANGLE]: ".shape-rectangle",
       [ShapeType.HEXAGON]: ".shape-hexagon",
       [ShapeType.FACING]: ".shape-rectangle",
