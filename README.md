@@ -33,6 +33,11 @@ This project was created out of my own need for a practical toolbox, and I want 
 
 # Version
 
+## 4.4.3
+* Fixed Square toggle label/button order (label left, toggle right)
+* Square checkbox now only shown for Rectangle shape (hidden for Facing and other shapes)
+* Restored separate width/height rows for rectangle (height field layout)
+
 ## 4.4.2
 * Slot milling is now a shape in the Shape menu (**Slot**) with length, X/Y axis and one-way / both-ways direction
 * Fixed the Square checkbox snapping back on when unchecked
