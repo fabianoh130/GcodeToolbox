@@ -33,6 +33,10 @@ This project was created out of my own need for a practical toolbox, and I want 
 
 # Version
 
+## 4.4.4
+* Fixed rectangle height field incorrectly shown when Slot shape is selected
+* Plunge pecking hidden and disabled for Slot (not applicable to line milling)
+
 ## 4.4.3
 * Fixed Square toggle label/button order (label left, toggle right)
 * Square checkbox now only shown for Rectangle shape (hidden for Facing and other shapes)
