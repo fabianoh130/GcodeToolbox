@@ -33,6 +33,10 @@ This project was created out of my own need for a practical toolbox, and I want 
 
 # Version
 
+## 4.4.0
+* Merged square and rectangle into one shape with a **Square** checkbox (width links height)
+* New **Slot milling** operation with one-way / both-ways direction (replaces pocket workaround for tool-width grooves)
+
 ## 4.3.4
 * Fixed contour tabs only being cut on the final depth pass when using ramp entry or multiple stepdowns
 

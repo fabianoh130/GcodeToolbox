@@ -22,6 +22,13 @@ const OperationType = {
   POCKET: "pocket",
   CONTOUR: "contour",
   FACING: "facing",
+  SLOT: "slot",
+};
+
+/** Slot travel: one way (retract between passes) or both ways (return at feed). */
+const SlotDirection = {
+  ONE_WAY: "one_way",
+  BOTH_WAYS: "both_ways",
 };
 
 /** Operatietype-categorie (eerste dropdown). "vormen" toont de vorm-dropdown. */
@@ -603,6 +610,43 @@ function distance2D(a, b) {
 }
 
 /**
+ * Rechthoekafmetingen (mm) uit shapeParams; ondersteunt legacy square.size.
+ * @param {*} shapeParams
+ * @returns {{ width: number, height: number }}
+ */
+function getRectDims(shapeParams) {
+  const width = Number.isFinite(shapeParams.width) ? shapeParams.width : shapeParams.size;
+  const height = Number.isFinite(shapeParams.height) ? shapeParams.height : shapeParams.size;
+  return { width, height };
+}
+
+/** @param {*} shapeParams @returns {{ hw: number, hh: number }} */
+function getRectHalfDims(shapeParams) {
+  const { width, height } = getRectDims(shapeParams);
+  return { hw: width / 2, hh: height / 2 };
+}
+
+/**
+ * Legacy square → rectangle normaliseren (breedte/hoogte vullen).
+ * @param {string} shape
+ * @param {*} shapeParams
+ */
+function normalizeLegacySquareShape(shape, shapeParams) {
+  if (shape !== ShapeType.SQUARE) return { shape, shapeParams };
+  const size = shapeParams.size;
+  return {
+    shape: ShapeType.RECTANGLE,
+    shapeParams: {
+      ...shapeParams,
+      type: ShapeType.RECTANGLE,
+      width: size,
+      height: size,
+      cornerRadius: shapeParams.cornerRadius ?? 0,
+    },
+  };
+}
+
+/**
  * Kleinste karakteristieke maat van de vorm (mm), gebruikt voor checks
  * t.o.v. freesdiameter (bij pocket / binnencontour).
  */
@@ -613,8 +657,10 @@ function getShapeMinSize(shape, shapeParams) {
     case ShapeType.SQUARE:
       return shapeParams.size;
     case ShapeType.RECTANGLE:
-    case ShapeType.FACING:
-      return Math.min(shapeParams.width, shapeParams.height);
+    case ShapeType.FACING: {
+      const { width, height } = getRectDims(shapeParams);
+      return Math.min(width, height);
+    }
     case ShapeType.ELLIPSE:
       return Math.min(shapeParams.major, shapeParams.minor);
     case ShapeType.HEXAGON:
@@ -1461,29 +1507,29 @@ function readInputsFromForm() {
   const displayUnit = getDisplayUnit();
 
   const operationTypeCategory = /** @type {HTMLSelectElement} */ (g("operation-type"))?.value ?? OperationTypeCategory.SHAPES;
-  const shape = resolveEffectiveShape(
+  let shape = resolveEffectiveShape(
     operationTypeCategory,
     /** @type {HTMLSelectElement} */ (g("shape"))?.value
   );
+  if (shape === ShapeType.SQUARE) shape = ShapeType.RECTANGLE;
   const operationRaw = /** @type {HTMLSelectElement} */ (g("operation")).value;
   const operation = (shape === ShapeType.FACING ? OperationType.FACING : shape === ShapeType.PATTERNED_HOLES ? OperationType.POCKET : operationRaw);
 
   const shapeParams = { type: shape };
   if (shape === ShapeType.CIRCLE) {
     shapeParams.diameter = toMm(toNumber(g("circle-diameter").value), displayUnit);
-  } else if (shape === ShapeType.SQUARE) {
-    shapeParams.size = toMm(toNumber(g("square-size").value), displayUnit);
-    const cornerEl = g("rounded-corner-radius");
-    shapeParams.cornerRadius = cornerEl ? Math.max(0, toMm(toNumber(cornerEl.value), displayUnit)) : 0;
-  } else if (shape === ShapeType.FACING) {
+  } else if (shape === ShapeType.SQUARE || shape === ShapeType.RECTANGLE || shape === ShapeType.FACING) {
     shapeParams.width = toMm(toNumber(g("rect-width").value), displayUnit);
-    shapeParams.height = toMm(toNumber(g("rect-height").value), displayUnit);
-    shapeParams.cornerRadius = 0;
-  } else if (shape === ShapeType.RECTANGLE) {
-    shapeParams.width = toMm(toNumber(g("rect-width").value), displayUnit);
-    shapeParams.height = toMm(toNumber(g("rect-height").value), displayUnit);
-    const cornerEl = g("rounded-corner-radius");
-    shapeParams.cornerRadius = cornerEl ? Math.max(0, toMm(toNumber(cornerEl.value), displayUnit)) : 0;
+    const isSquare = /** @type {HTMLInputElement} */ (g("rect-square"))?.checked ?? false;
+    shapeParams.height = isSquare
+      ? shapeParams.width
+      : toMm(toNumber(g("rect-height").value), displayUnit);
+    if (shape === ShapeType.FACING) {
+      shapeParams.cornerRadius = 0;
+    } else {
+      const cornerEl = g("rounded-corner-radius");
+      shapeParams.cornerRadius = cornerEl ? Math.max(0, toMm(toNumber(cornerEl.value), displayUnit)) : 0;
+    }
   } else if (shape === ShapeType.ELLIPSE) {
     shapeParams.major = toMm(toNumber(g("ellipse-major").value), displayUnit);
     shapeParams.minor = toMm(toNumber(g("ellipse-minor").value), displayUnit);
@@ -1592,6 +1638,7 @@ function readInputsFromForm() {
   const useArcsEnabled = /** @type {HTMLInputElement} */ (g("use-arcs-enabled"))?.checked ?? false;
 
   const finishingPassSupported = (operation === OperationType.POCKET || operation === OperationType.CONTOUR)
+    && operation !== OperationType.SLOT
     && shape !== ShapeType.THREAD_MILLING
     && !isEngravingContourMode(shape, contourType, letterMode);
   const finishingPassEnabled = isSimpleMode
@@ -1672,7 +1719,10 @@ function readInputsFromForm() {
   const rampAngle = toNumber(g("ramp-angle").value);
 
   const plungeOutsideRaw = /** @type {HTMLInputElement} */ (g("plunge-outside"))?.value ?? "off";
-  const plungeOutside = isSimpleMode ? false : ((operation === OperationType.POCKET || operation === OperationType.FACING || isVectorImportShape(shape)) ? false : plungeOutsideRaw === "on");
+  const plungeOutside = isSimpleMode ? false : ((operation === OperationType.POCKET || operation === OperationType.FACING || operation === OperationType.SLOT || isVectorImportShape(shape)) ? false : plungeOutsideRaw === "on");
+
+  const slotDirectionRaw = /** @type {HTMLSelectElement} */ (g("slot-direction"))?.value;
+  const slotDirection = slotDirectionRaw === SlotDirection.ONE_WAY ? SlotDirection.ONE_WAY : SlotDirection.BOTH_WAYS;
 
   const facingModeRaw = (/** @type {HTMLSelectElement} */ (g("facing-mode")))?.value?.trim?.() ?? "";
   const facingMode = facingModeRaw === "within" ? "within" : "full";
@@ -1726,6 +1776,7 @@ function readInputsFromForm() {
     },
     originParams,
     plungeOutside,
+    slotDirection,
     tabs: {
       enabled: tabsEnabled,
       interval: tabInterval,
@@ -1746,7 +1797,8 @@ function getParamsSnapshotReadOnly() {
   const isSimple = getDisplayMode() === "simple";
 
   const opCat = el("operation-type")?.value ?? OperationTypeCategory.SHAPES;
-  const shape = resolveEffectiveShape(opCat, el("shape")?.value);
+  let shape = resolveEffectiveShape(opCat, el("shape")?.value);
+  if (shape === ShapeType.SQUARE) shape = ShapeType.RECTANGLE;
   const opRaw = el("operation")?.value;
   const operation = (shape === ShapeType.FACING ? OperationType.FACING : shape === ShapeType.PATTERNED_HOLES ? OperationType.POCKET : opRaw);
 
@@ -1754,9 +1806,12 @@ function getParamsSnapshotReadOnly() {
   const v = (id) => toNumber(el(id)?.value);
   const vm = (id) => toMm(v(id), displayUnit);
   if (shape === ShapeType.CIRCLE) sp.diameter = vm("circle-diameter");
-  else if (shape === ShapeType.SQUARE) { sp.size = vm("square-size"); sp.cornerRadius = Math.max(0, vm("rounded-corner-radius") || 0); }
-  else if (shape === ShapeType.FACING) { sp.width = vm("rect-width"); sp.height = vm("rect-height"); sp.cornerRadius = 0; }
-  else if (shape === ShapeType.RECTANGLE) { sp.width = vm("rect-width"); sp.height = vm("rect-height"); sp.cornerRadius = Math.max(0, vm("rounded-corner-radius") || 0); }
+  else if (shape === ShapeType.FACING || shape === ShapeType.RECTANGLE) {
+    sp.width = vm("rect-width");
+    const isSquare = el("rect-square")?.checked ?? false;
+    sp.height = isSquare ? sp.width : vm("rect-height");
+    sp.cornerRadius = shape === ShapeType.FACING ? 0 : Math.max(0, vm("rounded-corner-radius") || 0);
+  }
   else if (shape === ShapeType.ELLIPSE) { sp.major = vm("ellipse-major"); sp.minor = vm("ellipse-minor"); }
   else if (shape === ShapeType.HEXAGON) sp.height = vm("hexagon-height");
   else if (shape === ShapeType.LETTERS) { sp.text = el("letter-text")?.value || ""; sp.fontSize = vm("letter-size") || 10; sp.letterOrientation = v("letter-orientation") || 0; }
@@ -1799,6 +1854,7 @@ function getParamsSnapshotReadOnly() {
   }
 
   const finishingPassSupported = (operation === OperationType.POCKET || operation === OperationType.CONTOUR)
+    && operation !== OperationType.SLOT
     && shape !== ShapeType.THREAD_MILLING
     && !isEngravingContourMode(shape, contourType, letterMode);
   const finPassEnabled = isSimple ? false : (finishingPassSupported && (el("finishing-pass-enabled")?.checked ?? false));
@@ -1860,7 +1916,9 @@ function getParamsSnapshotReadOnly() {
     originOffsetY: isSimple ? 0 : (vm("origin-offset-y") || 0),
   };
   const plungeRaw = el("plunge-outside")?.value ?? "off";
-  const plunge = isSimple ? false : ((operation === OperationType.POCKET || operation === OperationType.FACING || isVectorImportShape(shape)) ? false : plungeRaw === "on");
+  const plunge = isSimple ? false : ((operation === OperationType.POCKET || operation === OperationType.FACING || operation === OperationType.SLOT || isVectorImportShape(shape)) ? false : plungeRaw === "on");
+  const slotDirRaw = el("slot-direction")?.value;
+  const slotDir = slotDirRaw === SlotDirection.ONE_WAY ? SlotDirection.ONE_WAY : SlotDirection.BOTH_WAYS;
   const facing = (el("facing-mode")?.value?.trim?.() ?? "") === "within" ? "within" : "full";
   const facingDir = isSimple ? "x" : ((el("facing-direction")?.value?.trim?.() ?? "") === "y" ? "y" : "x");
   const facingFinishRaw = isSimple ? "off" : (el("facing-finish-mode")?.value?.trim?.() ?? "");
@@ -1871,7 +1929,7 @@ function getParamsSnapshotReadOnly() {
   const entry = effectiveEntryMethod(shape, contourType, letterMode, isSimple ? EntryMethod.PLUNGE : (el("entry-method")?.value || EntryMethod.PLUNGE));
   const ramp = v("ramp-angle") || 3;
 
-  const snap = { shape, operation, shapeParams: sp, letterMode, contourType, facingMode: facing, facingDirection: facingDir, facingFinishMode, facingEvenSpacing: facingEven, plungeOutside: plunge, cutParams: { ...cp, entryMethod: entry, rampAngleMax: ramp }, originParams: op, tabs };
+  const snap = { shape, operation, shapeParams: sp, letterMode, contourType, facingMode: facing, facingDirection: facingDir, facingFinishMode, facingEvenSpacing: facingEven, plungeOutside: plunge, slotDirection: slotDir, cutParams: { ...cp, entryMethod: entry, rampAngleMax: ramp }, originParams: op, tabs };
   if (isVectorImportShape(shape)) {
     const f = el("vector-file");
     const file = f?.files?.[0];
@@ -1884,7 +1942,7 @@ function getParamsSnapshotReadOnly() {
 const NUM_TOL = 1e-6;
 function paramsSnapshotsEqual(a, b) {
   if (!a || !b) return a === b;
-  if (a.shape !== b.shape || a.operation !== b.operation || a.letterMode !== b.letterMode || a.contourType !== b.contourType || a.facingMode !== b.facingMode || a.facingDirection !== b.facingDirection || a.facingFinishMode !== b.facingFinishMode || a.facingEvenSpacing !== b.facingEvenSpacing || a.plungeOutside !== b.plungeOutside) return false;
+  if (a.shape !== b.shape || a.operation !== b.operation || a.letterMode !== b.letterMode || a.contourType !== b.contourType || a.facingMode !== b.facingMode || a.facingDirection !== b.facingDirection || a.facingFinishMode !== b.facingFinishMode || a.facingEvenSpacing !== b.facingEvenSpacing || a.plungeOutside !== b.plungeOutside || a.slotDirection !== b.slotDirection) return false;
   function eq(x, y) {
     if (typeof x === "number" && typeof y === "number") return Math.abs(x - y) < NUM_TOL;
     return x === y;
@@ -2019,13 +2077,13 @@ function validateInputs(raw) {
       assertPositive(sp.diameter, "field.diameter");
       break;
     case ShapeType.SQUARE:
-      assertPositive(sp.size, "field.side");
-      break;
     case ShapeType.RECTANGLE:
-    case ShapeType.FACING:
-      assertPositive(sp.width, "field.width");
-      assertPositive(sp.height, "field.height");
+    case ShapeType.FACING: {
+      const { width, height } = getRectDims(sp);
+      assertPositive(width, "field.width");
+      assertPositive(height, "field.height");
       break;
+    }
     case ShapeType.ELLIPSE:
       assertPositive(sp.major, "field.majorAxis");
       assertPositive(sp.minor, "field.minorAxis");
@@ -2163,8 +2221,12 @@ function validateInputs(raw) {
   if ((raw.operation === OperationType.FACING || raw.shape === ShapeType.FACING) &&
       Number.isFinite(toolD) &&
       toolD > 0) {
-    const w = raw.shape === ShapeType.SQUARE ? sp.size : sp.width;
-    const h = raw.shape === ShapeType.SQUARE ? sp.size : sp.height;
+    const w = raw.shape === ShapeType.FACING || raw.shape === ShapeType.RECTANGLE || raw.shape === ShapeType.SQUARE
+      ? getRectDims(sp).width
+      : sp.width;
+    const h = raw.shape === ShapeType.FACING || raw.shape === ShapeType.RECTANGLE || raw.shape === ShapeType.SQUARE
+      ? getRectDims(sp).height
+      : sp.height;
     if (Number.isFinite(w) && Number.isFinite(h)) {
       const minDim = Math.min(w, h);
       if (raw.facingMode === "within" && minDim + 1e-6 <= toolD) {
@@ -2176,11 +2238,19 @@ function validateInputs(raw) {
   if ((raw.shape === ShapeType.SQUARE || raw.shape === ShapeType.RECTANGLE) &&
       Number.isFinite(sp.cornerRadius) &&
       sp.cornerRadius > 0) {
-    const hw = raw.shape === ShapeType.SQUARE ? sp.size / 2 : sp.width / 2;
-    const hh = raw.shape === ShapeType.SQUARE ? sp.size / 2 : sp.height / 2;
+    const { hw, hh } = getRectHalfDims(sp);
     const maxRadius = Math.min(hw, hh);
     if (Number.isFinite(hw) && Number.isFinite(hh) && sp.cornerRadius >= maxRadius - 1e-6) {
       errors.push(t("error.cornerRadiusTooLarge"));
+    }
+  }
+
+  if (raw.operation === OperationType.SLOT) {
+    try {
+      const norm = normalizeLegacySquareShape(raw.shape, sp);
+      generateSlotPath(norm.shape, norm.shapeParams, cp.toolDiameter);
+    } catch (e) {
+      errors.push(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -3927,6 +3997,143 @@ function buildDxfSupportPreviewFields(supportMeta, shift, totalDepth) {
 }
 
 /**
+ * Slot-pad genereren (open lijn of enkel punt voor center plunge).
+ * Vereist: sleufbreedte = freesdiameter (één dimensie bij rechthoek).
+ * @param {string} shape
+ * @param {*} shapeParams
+ * @param {number} toolDiameter
+ * @returns {{x:number,y:number,z:number}[]}
+ */
+function generateSlotPath(shape, shapeParams, toolDiameter) {
+  const toolRadius = toolDiameter / 2;
+  const eps = 1e-6;
+  const norm = normalizeLegacySquareShape(shape, shapeParams);
+  const slotShape = norm.shape;
+  const slotParams = norm.shapeParams;
+
+  if (
+    slotShape === ShapeType.CIRCLE ||
+    slotShape === ShapeType.ELLIPSE ||
+    slotShape === ShapeType.HEXAGON
+  ) {
+    const minSize = getShapeMinSize(slotShape, slotParams);
+    if (!Number.isFinite(minSize) || Math.abs(minSize - toolDiameter) > eps) {
+      throw new Error(t("error.slotWidthMustMatchTool"));
+    }
+    return [{ x: 0, y: 0, z: 0 }];
+  }
+
+  if (slotShape === ShapeType.RECTANGLE) {
+    const { width: w, height: h } = getRectDims(slotParams);
+    if (!Number.isFinite(w) || !Number.isFinite(h)) {
+      throw new Error(t("error.slotWidthMustMatchTool"));
+    }
+    if (Math.abs(w - toolDiameter) <= eps && Math.abs(h - toolDiameter) <= eps) {
+      return [{ x: 0, y: 0, z: 0 }];
+    }
+    if (Math.abs(w - toolDiameter) <= eps) {
+      const halfLine = Math.max(h / 2 - toolRadius, 0);
+      return [
+        { x: 0, y: -halfLine, z: 0 },
+        { x: 0, y: halfLine, z: 0 },
+      ];
+    }
+    if (Math.abs(h - toolDiameter) <= eps) {
+      const halfLine = Math.max(w / 2 - toolRadius, 0);
+      return [
+        { x: -halfLine, y: 0, z: 0 },
+        { x: halfLine, y: 0, z: 0 },
+      ];
+    }
+    throw new Error(t("error.slotWidthMustMatchTool"));
+  }
+
+  throw new Error(t("error.slotShapeNotSupported"));
+}
+
+/**
+ * Eén dieptelaag voor een slot-pad (lijn frezen).
+ * @param {ToolpathMove[]} moves
+ * @param {{x:number,y:number,z:number}[]} path
+ * @param {number} depthZ
+ * @param {*} cutParams
+ * @param {string} entryMethod
+ * @param {number} safeZ
+ * @param {string} slotDirection
+ * @param {{ isFirstDepth?: boolean, isLastDepth?: boolean, stepDownFromZ?: number|null }} [opts]
+ */
+function addSlotLayerForPath(moves, path, depthZ, cutParams, entryMethod, safeZ, slotDirection, opts = {}) {
+  if (!path || path.length === 0) return;
+  const { isFirstDepth = true, isLastDepth = true, stepDownFromZ = null } = opts;
+  const oneWay = slotDirection === SlotDirection.ONE_WAY;
+
+  if (path.length === 1) {
+    if (isFirstDepth) {
+      addLayerForPath(moves, path, depthZ, cutParams, false, entryMethod, true, safeZ);
+    } else {
+      addLayerForPath(moves, path, depthZ, cutParams, false, entryMethod, false, safeZ);
+    }
+    if (oneWay && !isLastDepth) {
+      const end = moves[moves.length - 1];
+      if (end && end.z < safeZ - 1e-6) {
+        moves.push({ x: end.x, y: end.y, z: safeZ, type: "rapid" });
+      }
+    }
+    return;
+  }
+
+  const start = path[0];
+  const last = moves[moves.length - 1];
+  const atStartAfterReturn = last
+    && Math.abs(last.x - start.x) < 1e-6
+    && Math.abs(last.y - start.y) < 1e-6
+    && !oneWay
+    && !isFirstDepth
+    && Number.isFinite(stepDownFromZ);
+
+  if (atStartAfterReturn) {
+    moves.push({ x: start.x, y: start.y, z: stepDownFromZ, type: "cut" });
+    moves.push({ x: start.x, y: start.y, z: depthZ, type: "cut" });
+    for (let i = 1; i < path.length; i++) {
+      moves.push({ x: path[i].x, y: path[i].y, z: depthZ, type: "cut" });
+    }
+  } else {
+    addLayerForPath(
+      moves,
+      path,
+      depthZ,
+      cutParams,
+      false,
+      entryMethod,
+      true,
+      safeZ,
+      undefined,
+      false,
+      false,
+      cutParams.toolDiameter / 2,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      true,
+      false,
+      true
+    );
+  }
+
+  if (!oneWay) {
+    for (let i = path.length - 2; i >= 0; i--) {
+      moves.push({ x: path[i].x, y: path[i].y, z: depthZ, type: "cut" });
+    }
+  } else {
+    const end = moves[moves.length - 1];
+    if (end && end.z < safeZ - 1e-6) {
+      moves.push({ x: end.x, y: end.y, z: safeZ, type: "rapid" });
+    }
+  }
+}
+
+/**
  * Toolpath genereren met lagen, insteek en origin-correctie.
  * @returns {Toolpath}
  */
@@ -3934,16 +4141,51 @@ function generateToolpath(params) {
   const { shape, operation, shapeParams, cutParams, originParams, plungeOutside, contourType, tabs, facingMode, facingDirection } =
     params;
   const toolRadius = cutParams.toolDiameter / 2;
-  const minSizeForShape = getShapeMinSize(shape, shapeParams);
-  const epsSize = 1e-6;
-  const equalToToolDiameter =
-    Number.isFinite(minSizeForShape) &&
-    Math.abs(minSizeForShape - cutParams.toolDiameter) <= epsSize;
 
   /** @type {ToolpathMove[]} */
   const moves = [];
 
   const depths = computeDepthLevels(cutParams.totalDepth, cutParams.stepdown);
+
+  // Slot (lijn frezen): open pad of center plunge
+  if (operation === OperationType.SLOT) {
+    const norm = normalizeLegacySquareShape(shape, shapeParams);
+    const slotPath = generateSlotPath(norm.shape, norm.shapeParams, cutParams.toolDiameter);
+    const slotDirection = params.slotDirection === SlotDirection.ONE_WAY
+      ? SlotDirection.ONE_WAY
+      : SlotDirection.BOTH_WAYS;
+    const entryMethod = cutParams.entryMethod;
+    const safeZ = cutParams.safeHeight;
+
+    let prevDepthZ = 0;
+    depths.forEach((depthZ, depthIndex) => {
+      addSlotLayerForPath(moves, slotPath, depthZ, cutParams, entryMethod, safeZ, slotDirection, {
+        isFirstDepth: depthIndex === 0,
+        isLastDepth: depthIndex === depths.length - 1,
+        stepDownFromZ: depthIndex > 0 ? prevDepthZ : null,
+      });
+      prevDepthZ = depthZ;
+    });
+
+    if (moves.length > 0) {
+      const last = moves[moves.length - 1];
+      if (last.z < safeZ - 1e-6) {
+        moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
+      }
+    }
+
+    const resultRaw = getResultShapePathsRaw(params);
+    const shift = computeOriginShift(moves, originParams, cutParams.totalDepth, toolRadius, operation, "inside", undefined, false);
+    applyOriginTransform(moves, originParams, cutParams.totalDepth, toolRadius, operation, "inside");
+    if (resultRaw && resultRaw.paths.length > 0) {
+      resultRaw.paths.forEach((path) => {
+        applyOriginTransformToPoints(path, shift.shiftX, shift.shiftY, shift.zOffset, shift.zOriginMode, cutParams.totalDepth);
+      });
+      const resultBounds = computeBoundsFromPaths(resultRaw.paths);
+      return { moves, resultPaths: resultRaw.paths, resultTotalDepth: resultRaw.totalDepth, resultBottomZ: resultRaw.bottomZ, resultContourInside: true, resultBounds, toolDiameter: cutParams.toolDiameter };
+    }
+    return { moves, toolDiameter: cutParams.toolDiameter };
+  }
 
   // Lettergravering: outline (omtrek) of pocket (binnenkant uitfrezen)
   if (shape === ShapeType.LETTERS) {
@@ -4667,43 +4909,6 @@ function generateToolpath(params) {
             ))
       : generateBasePath(shape, shapeParams, operation);
 
-  // Speciaal geval: binnencontour exact freesdiameter
-  if (
-    operation === OperationType.CONTOUR &&
-    contourType === "inside" &&
-    equalToToolDiameter
-  ) {
-    if (
-      shape === ShapeType.CIRCLE ||
-      shape === ShapeType.ELLIPSE ||
-      shape === ShapeType.SQUARE ||
-      shape === ShapeType.HEXAGON
-    ) {
-      // Cirkels, ellipsen, vierkanten en hexagon: enkel boorgat in het midden
-      contourPath = [{ x: 0, y: 0, z: 0 }];
-    } else if (shape === ShapeType.RECTANGLE) {
-      const w = shapeParams.width;
-      const h = shapeParams.height;
-      if (Math.abs(w - cutParams.toolDiameter) <= epsSize && Math.abs(h - cutParams.toolDiameter) <= epsSize) {
-        contourPath = [{ x: 0, y: 0, z: 0 }];
-      } else if (Math.abs(w - cutParams.toolDiameter) <= epsSize) {
-        // Breedte = diameter → verticale lijn (langs hoogte)
-        const halfLine = Math.max(h / 2 - toolRadius, 0);
-        contourPath = [
-          { x: 0, y: -halfLine, z: 0 },
-          { x: 0, y: halfLine, z: 0 },
-        ];
-      } else {
-        // Hoogte = diameter → horizontale lijn (langs breedte)
-        const halfLine = Math.max(w / 2 - toolRadius, 0);
-        contourPath = [
-          { x: -halfLine, y: 0, z: 0 },
-          { x: halfLine, y: 0, z: 0 },
-        ];
-      }
-    }
-  }
-
   // Voor vierkant/rechthoek/hexagon: startpunt van contourpad verplaatsen naar midden van een zijde
   if (
     operation === OperationType.CONTOUR &&
@@ -4845,68 +5050,33 @@ function generateToolpath(params) {
   /** @type {{x:number,y:number,z:number}[][]} */
   let pocketPaths = [];
   if (operation === OperationType.POCKET) {
-    if (equalToToolDiameter) {
-      // Speciaal geval: pocket precies freesdiameter
-      if (shape === ShapeType.PATTERNED_HOLES) {
-        const countX = Math.max(1, shapeParams.countX || 1);
-        const countY = Math.max(1, shapeParams.countY || 1);
-        const spacingX = shapeParams.spacingX || 96;
-        const spacingY = shapeParams.spacingY || 96;
-        pocketPaths = [];
+    const fpDist = (cutParams.finishingPassEnabled && cutParams.finishingPassDistance > 0) ? cutParams.finishingPassDistance : 0;
+    const epsPocket = 1e-6;
+    if (shape === ShapeType.CIRCLE) {
+      pocketPaths = [generateSpiralPocketCircle(shapeParams, cutParams.stepover, toolRadius, fpDist)];
+    } else if (shape === ShapeType.ELLIPSE) {
+      pocketPaths = [generateSpiralPocketEllipse(shapeParams, cutParams.stepover, toolRadius, fpDist)];
+    } else if (shape === ShapeType.SQUARE || shape === ShapeType.RECTANGLE) {
+      const rings = generatePocketRings(shape, shapeParams, cutParams.stepover, toolRadius, fpDist);
+      const fromInsideOut = rings.length > 0 ? rings.slice().reverse() : [];
+      pocketPaths = fromInsideOut.length > 0 ? [ringsToPathWithCurvedTransitions(fromInsideOut)] : [];
+    } else if (shape === ShapeType.HEXAGON) {
+      pocketPaths = [generateSpiralPocketHexagon(shapeParams, cutParams.stepover, toolRadius, fpDist)];
+    } else if (shape === ShapeType.PATTERNED_HOLES) {
+      const countX = Math.max(1, shapeParams.countX || 1);
+      const countY = Math.max(1, shapeParams.countY || 1);
+      const spacingX = shapeParams.spacingX || 96;
+      const spacingY = shapeParams.spacingY || 96;
+      pocketPaths = [];
+      if (Math.abs(shapeParams.diameter - cutParams.toolDiameter) <= epsPocket) {
         for (let j = 0; j < countY; j++) {
           for (let i = 0; i < countX; i++) {
-            const cx = i * spacingX;
-            const cy = j * spacingY;
-            pocketPaths.push([{ x: cx, y: cy, z: 0 }]);
+            pocketPaths.push([{ x: i * spacingX, y: j * spacingY, z: 0 }]);
           }
         }
-      } else if (
-        shape === ShapeType.CIRCLE ||
-        shape === ShapeType.ELLIPSE ||
-        shape === ShapeType.SQUARE ||
-        shape === ShapeType.HEXAGON
-      ) {
-        // Cirkels, ellipsen, vierkanten en hexagon: enkel "boor"-pad op het midden.
-        pocketPaths = [[{ x: 0, y: 0, z: 0 }]];
-      } else if (shape === ShapeType.RECTANGLE) {
-        const w = shapeParams.width;
-        const h = shapeParams.height;
-        if (Math.abs(w - cutParams.toolDiameter) <= epsSize && Math.abs(h - cutParams.toolDiameter) <= epsSize) {
-          pocketPaths = [[{ x: 0, y: 0, z: 0 }]];
-        } else if (Math.abs(w - cutParams.toolDiameter) <= epsSize) {
-          const halfLine = Math.max(h / 2 - toolRadius, 0);
-          pocketPaths = [[
-            { x: 0, y: -halfLine, z: 0 },
-            { x: 0, y: halfLine, z: 0 },
-          ]];
-        } else {
-          const halfLine = Math.max(w / 2 - toolRadius, 0);
-          pocketPaths = [[
-            { x: -halfLine, y: 0, z: 0 },
-            { x: halfLine, y: 0, z: 0 },
-          ]];
-        }
-      }
-    } else {
-      const fpDist = (cutParams.finishingPassEnabled && cutParams.finishingPassDistance > 0) ? cutParams.finishingPassDistance : 0;
-      if (shape === ShapeType.CIRCLE) {
-        pocketPaths = [generateSpiralPocketCircle(shapeParams, cutParams.stepover, toolRadius, fpDist)];
-      } else if (shape === ShapeType.ELLIPSE) {
-        pocketPaths = [generateSpiralPocketEllipse(shapeParams, cutParams.stepover, toolRadius, fpDist)];
-      } else if (shape === ShapeType.SQUARE || shape === ShapeType.RECTANGLE) {
-        const rings = generatePocketRings(shape, shapeParams, cutParams.stepover, toolRadius, fpDist);
-        const fromInsideOut = rings.length > 0 ? rings.slice().reverse() : [];
-        pocketPaths = fromInsideOut.length > 0 ? [ringsToPathWithCurvedTransitions(fromInsideOut)] : [];
-      } else if (shape === ShapeType.HEXAGON) {
-        pocketPaths = [generateSpiralPocketHexagon(shapeParams, cutParams.stepover, toolRadius, fpDist)];
-      } else if (shape === ShapeType.PATTERNED_HOLES) {
-        const countX = Math.max(1, shapeParams.countX || 1);
-        const countY = Math.max(1, shapeParams.countY || 1);
-        const spacingX = shapeParams.spacingX || 96;
-        const spacingY = shapeParams.spacingY || 96;
+      } else {
         const holeShapeParams = { diameter: shapeParams.diameter };
         const singlePath = generateSpiralPocketCircle(holeShapeParams, cutParams.stepover, toolRadius, fpDist);
-        pocketPaths = [];
         for (let j = 0; j < countY; j++) {
           for (let i = 0; i < countX; i++) {
             const cx = i * spacingX;
@@ -4915,26 +5085,26 @@ function generateToolpath(params) {
             pocketPaths.push(translatedPath);
           }
         }
-      } else if (shape === ShapeType.CIRCULAR_PATTERN_HOLES) {
-        const count = Math.max(1, shapeParams.count || 6);
-        const circleRadius = (shapeParams.circleDiameter || 80) / 2;
-        const startAngleDeg = Math.max(0, Math.min(360, shapeParams.startAngle ?? 0));
-        const startAngleRad = Math.PI / 2 - (startAngleDeg * Math.PI / 180);
-        const holeShapeParams = { diameter: shapeParams.diameter };
-        const singlePath = generateSpiralPocketCircle(holeShapeParams, cutParams.stepover, toolRadius, fpDist);
-        pocketPaths = [];
-        for (let i = 0; i < count; i++) {
-          const angle = startAngleRad + (2 * Math.PI * i) / count;
-          const cx = circleRadius * Math.cos(angle);
-          const cy = circleRadius * Math.sin(angle);
-          const translatedPath = singlePath.map((p) => ({ x: p.x + cx, y: p.y + cy, z: p.z }));
-          pocketPaths.push(translatedPath);
-        }
-        if (shapeParams.holeInCenter && Number.isFinite(shapeParams.centerHoleDiameter) && shapeParams.centerHoleDiameter > 0) {
-          const centerHoleParams = { diameter: shapeParams.centerHoleDiameter };
-          const centerPath = generateSpiralPocketCircle(centerHoleParams, cutParams.stepover, toolRadius, fpDist);
-          pocketPaths.push(centerPath);
-        }
+      }
+    } else if (shape === ShapeType.CIRCULAR_PATTERN_HOLES) {
+      const count = Math.max(1, shapeParams.count || 6);
+      const circleRadius = (shapeParams.circleDiameter || 80) / 2;
+      const startAngleDeg = Math.max(0, Math.min(360, shapeParams.startAngle ?? 0));
+      const startAngleRad = Math.PI / 2 - (startAngleDeg * Math.PI / 180);
+      const holeShapeParams = { diameter: shapeParams.diameter };
+      const singlePath = generateSpiralPocketCircle(holeShapeParams, cutParams.stepover, toolRadius, fpDist);
+      pocketPaths = [];
+      for (let i = 0; i < count; i++) {
+        const angle = startAngleRad + (2 * Math.PI * i) / count;
+        const cx = circleRadius * Math.cos(angle);
+        const cy = circleRadius * Math.sin(angle);
+        const translatedPath = singlePath.map((p) => ({ x: p.x + cx, y: p.y + cy, z: p.z }));
+        pocketPaths.push(translatedPath);
+      }
+      if (shapeParams.holeInCenter && Number.isFinite(shapeParams.centerHoleDiameter) && shapeParams.centerHoleDiameter > 0) {
+        const centerHoleParams = { diameter: shapeParams.centerHoleDiameter };
+        const centerPath = generateSpiralPocketCircle(centerHoleParams, cutParams.stepover, toolRadius, fpDist);
+        pocketPaths.push(centerPath);
       }
     }
   }
@@ -6718,6 +6888,8 @@ function getGcodeOperationLabel(params) {
   let opLabel = "";
   if (operation === OperationType.POCKET) {
     opLabel = t("form.operationPocket");
+  } else if (operation === OperationType.SLOT) {
+    opLabel = t("form.operationSlot");
   } else if (operation === OperationType.CONTOUR) {
     if (contourType === "inside") opLabel = t("form.contourInside");
     else if (contourType === "engraving") opLabel = t("form.contourEngraving");
@@ -8721,8 +8893,8 @@ let syncFormUIFromChainStep = null;
 
 /** Formuliervelden die per stap worden opgeslagen. */
 const CHAIN_CAPTURE_FIELD_IDS = [
-  "operation-type", "hole-pattern-layout", "shape", "operation",
-  "circle-diameter", "square-size", "square-preset", "rect-width", "rect-height", "rect-preset",
+  "operation-type", "hole-pattern-layout", "shape", "operation", "slot-direction",
+  "circle-diameter", "rect-width", "rect-height", "rect-square", "rect-preset",
   "rounded-corner-radius", "hexagon-height", "ellipse-major", "ellipse-minor",
   "letter-text", "letter-size", "letter-mode", "letter-orientation",
   "counterbore-head-diameter", "counterbore-depth", "counterbore-bolt-diameter",
@@ -8833,10 +9005,22 @@ function captureFormStateForChain() {
   };
 }
 
+function migrateLegacyFormStateFields(fields) {
+  if (fields.shape === "square") {
+    fields.shape = "rectangle";
+    if (fields["square-size"] != null && fields["rect-width"] == null) {
+      fields["rect-width"] = fields["square-size"];
+      fields["rect-height"] = fields["square-size"];
+    }
+    fields["rect-square"] = true;
+  }
+}
+
 function applyFormStateForChain(formState) {
   if (!formState?.fields) return;
   /** @type {Record<string, string|boolean|number>} */
   const fields = { ...formState.fields };
+  migrateLegacyFormStateFields(fields);
   if (fields["operation-type"] === "dxf" || fields["operation-type"] === "svg") {
     fields["operation-type"] = OperationTypeCategory.VECTOR_IMPORT;
   }
@@ -9413,7 +9597,7 @@ function setupUI() {
 
   // Unit switcher (mm / inch): bewaar keuze, converteer velden bij wissel, update labels
   const LENGTH_INPUT_IDS = [
-    "circle-diameter", "square-size", "rect-width", "rect-height", "rounded-corner-radius", "ellipse-major", "ellipse-minor", "letter-size",
+    "circle-diameter", "rect-width", "rect-height", "rounded-corner-radius", "ellipse-major", "ellipse-minor", "letter-size",
     "counterbore-head-diameter", "counterbore-depth", "counterbore-bolt-diameter",
     "thread-major-diameter", "thread-pitch", "thread-hole-diameter", "thread-milling-depth",
     "patterned-holes-diameter", "patterned-holes-spacing-x", "patterned-holes-spacing-y",
@@ -9430,7 +9614,7 @@ function setupUI() {
   };
   /** Step in mm voor wrapper (data-step); gebruikt voor +/- knoppen en in inch omgerekend. */
   const STEP_MM_BY_INPUT = {
-    "circle-diameter": 1, "square-size": 1, "rect-width": 1, "rect-height": 1, "rounded-corner-radius": 0.5,
+    "circle-diameter": 1, "rect-width": 1, "rect-height": 1, "rounded-corner-radius": 0.5,
     "ellipse-major": 1, "ellipse-minor": 1, "letter-size": 1,
     "patterned-holes-diameter": 0.1, "patterned-holes-spacing-x": 1, "patterned-holes-spacing-y": 1,
     "counterbore-head-diameter": 1, "counterbore-depth": 0.5, "counterbore-bolt-diameter": 0.5,
@@ -9448,7 +9632,6 @@ function setupUI() {
   /** Default waarden in inch (afgeleid van mm-defaults, afgerond op logische inch-waarden). Stepover blijft %. */
   const DEFAULT_VALUES_INCH = {
     "circle-diameter": 2,
-    "square-size": 2,
     "rect-width": 3.5,
     "rect-height": 5,
     "rounded-corner-radius": 0,
@@ -9928,6 +10111,22 @@ function setupUI() {
       : t("form.facingEvenSpacingStepoverHintMm", { val: showVal });
   }
 
+  function updateRectSquareUI() {
+    const squareCb = /** @type {HTMLInputElement | null} */ (document.getElementById("rect-square"));
+    const heightRow = document.getElementById("rect-height-row");
+    const widthInput = /** @type {HTMLInputElement | null} */ (document.getElementById("rect-width"));
+    const heightInput = /** @type {HTMLInputElement | null} */ (document.getElementById("rect-height"));
+    const squareRow = document.querySelector(".rect-square-row");
+    const isFacing = getEffectiveShape() === ShapeType.FACING;
+    if (squareRow) squareRow.classList.toggle("hidden", isFacing);
+    if (!squareCb) return;
+    const isSquare = squareCb.checked;
+    if (heightRow) heightRow.classList.toggle("hidden", isSquare);
+    if (isSquare && widthInput && heightInput) {
+      heightInput.value = widthInput.value;
+    }
+  }
+
   function updateUIForOperationTypeAndShape() {
     const opType = operationTypeSelect?.value ?? OperationTypeCategory.SHAPES;
     const selected = getEffectiveShape();
@@ -9953,7 +10152,6 @@ function setupUI() {
       .forEach((el) => el.classList.add("hidden"));
     const map = {
       [ShapeType.CIRCLE]: ".shape-circle",
-      [ShapeType.SQUARE]: ".shape-square",
       [ShapeType.RECTANGLE]: ".shape-rectangle",
       [ShapeType.HEXAGON]: ".shape-hexagon",
       [ShapeType.FACING]: ".shape-rectangle",
@@ -9971,11 +10169,12 @@ function setupUI() {
         .querySelectorAll(selector)
         .forEach((el) => el.classList.remove("hidden"));
     }
-    if (selected === ShapeType.SQUARE || selected === ShapeType.RECTANGLE) {
+    if (selected === ShapeType.RECTANGLE || selected === ShapeType.FACING) {
       document
         .querySelectorAll(".shape-rounded-corners")
         .forEach((el) => el.classList.remove("hidden"));
     }
+    updateRectSquareUI();
 
     const operationRow = document.getElementById("operation-row");
     const contourOnlyElems = document.querySelectorAll(".contour-only");
@@ -10163,27 +10362,25 @@ function setupUI() {
 
   initDxfSupportUI();
 
-  // Presets: vierkant (50, 100, 150) en rechthoek (A4, A5, A6, foto) via dropdown; geselecteerde preset blijft zichtbaar tot breedte/hoogte handmatig wordt gewijzigd
-  const squarePresetSelect = /** @type {HTMLSelectElement | null} */ (document.getElementById("square-preset"));
+  // Presets: rechthoek (vierkant + A4, A5, A6, foto) via dropdown
   const rectPresetSelect = /** @type {HTMLSelectElement | null} */ (document.getElementById("rect-preset"));
-  const squareSizeInput = document.getElementById("square-size");
+  const rectSquareCheckbox = /** @type {HTMLInputElement | null} */ (document.getElementById("rect-square"));
   const rectWidthInput = document.getElementById("rect-width");
   const rectHeightInput = document.getElementById("rect-height");
 
-  if (squarePresetSelect) {
-    squarePresetSelect.addEventListener("change", () => {
-      const val = squarePresetSelect.value;
-      if (!val) return;
-      const mm = toNumber(val);
-      if (squareSizeInput) /** @type {HTMLInputElement} */ (squareSizeInput).value = String(fromMm(mm, getDisplayUnit()));
-    });
-  }
-  if (squareSizeInput && squarePresetSelect) {
-    squareSizeInput.addEventListener("input", () => {
-      const val = /** @type {HTMLInputElement} */ (squareSizeInput).value;
-      const match = ["50", "100", "150"].includes(val) ? val : "";
-      squarePresetSelect.value = match;
-    });
+  function syncRectPresetFromInputs() {
+    if (!rectPresetSelect || !rectWidthInput || !rectHeightInput) return;
+    const w = Math.round(parseFloat(/** @type {HTMLInputElement} */ (rectWidthInput).value) || 0);
+    const h = Math.round(parseFloat(/** @type {HTMLInputElement} */ (rectHeightInput).value) || 0);
+    const key1 = `${w},${h}`;
+    const key2 = `${h},${w}`;
+    const options = Array.from(rectPresetSelect.options);
+    const match = options.find((opt) => opt.value === key1 || opt.value === key2);
+    rectPresetSelect.value = match ? match.value : "";
+    if (rectSquareCheckbox) {
+      rectSquareCheckbox.checked = w > 0 && w === h;
+      updateRectSquareUI();
+    }
   }
 
   if (rectPresetSelect) {
@@ -10195,19 +10392,27 @@ function setupUI() {
       const u = getDisplayUnit();
       if (rectWidthInput) /** @type {HTMLInputElement} */ (rectWidthInput).value = String(fromMm(w, u));
       if (rectHeightInput) /** @type {HTMLInputElement} */ (rectHeightInput).value = String(fromMm(h, u));
+      if (rectSquareCheckbox) {
+        rectSquareCheckbox.checked = Math.abs(w - h) < 1e-6;
+        updateRectSquareUI();
+      }
     });
   }
-  function syncRectPresetFromInputs() {
-    if (!rectPresetSelect || !rectWidthInput || !rectHeightInput) return;
-    const w = Math.round(parseFloat(/** @type {HTMLInputElement} */ (rectWidthInput).value) || 0);
-    const h = Math.round(parseFloat(/** @type {HTMLInputElement} */ (rectHeightInput).value) || 0);
-    const key1 = `${w},${h}`;
-    const key2 = `${h},${w}`;
-    const options = Array.from(rectPresetSelect.options);
-    const match = options.find((opt) => opt.value === key1 || opt.value === key2);
-    rectPresetSelect.value = match ? match.value : "";
+  if (rectSquareCheckbox) {
+    rectSquareCheckbox.addEventListener("change", () => {
+      updateRectSquareUI();
+      syncRectPresetFromInputs();
+      if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
+    });
   }
-  if (rectWidthInput) rectWidthInput.addEventListener("input", syncRectPresetFromInputs);
+  if (rectWidthInput) {
+    rectWidthInput.addEventListener("input", () => {
+      if (rectSquareCheckbox?.checked && rectHeightInput) {
+        /** @type {HTMLInputElement} */ (rectHeightInput).value = /** @type {HTMLInputElement} */ (rectWidthInput).value;
+      }
+      syncRectPresetFromInputs();
+    });
+  }
   if (rectHeightInput) rectHeightInput.addEventListener("input", syncRectPresetFromInputs);
 
   // Preset patterned holes (Festool MFT)
@@ -10476,7 +10681,21 @@ function setupUI() {
     const op = operationSelect.value;
     const shape = getEffectiveShape();
     const showContour = op === OperationType.CONTOUR;
+    const showSlot = op === OperationType.SLOT;
     const showFacing = shape === ShapeType.FACING;
+
+    document.querySelectorAll(".slot-only").forEach((el) => {
+      el.classList.toggle("hidden", !showSlot);
+    });
+
+    const slotOpt = operationSelect?.querySelector('option[value="slot"]');
+    if (slotOpt) {
+      const slotShapeOk = isBasicShapeType(shape);
+      slotOpt.disabled = !slotShapeOk;
+      if (!slotShapeOk && operationSelect?.value === OperationType.SLOT) {
+        operationSelect.value = OperationType.POCKET;
+      }
+    }
 
     const contourTypeSelect = /** @type {HTMLSelectElement} */ (document.getElementById("contour-type"));
     const outsideOpt = document.getElementById("contour-type-outside");
@@ -10553,6 +10772,7 @@ function setupUI() {
       : (shape === ShapeType.PATTERNED_HOLES ? OperationType.POCKET : op);
     const showPocket = effectiveOpForPocket === OperationType.POCKET;
     const showFinishingPass = (effectiveOpForPocket === OperationType.POCKET || effectiveOpForPocket === OperationType.CONTOUR)
+      && effectiveOpForPocket !== OperationType.SLOT
       && shape !== ShapeType.THREAD_MILLING
       && !isVectorImportEngraving;
     document.querySelectorAll(".pocket-only").forEach((el) => {
@@ -10581,8 +10801,8 @@ function setupUI() {
       if (fpCb && fpOverlapRow) fpOverlapRow.classList.toggle("hidden", !fpCb.checked);
     }
 
-    // Bij wisselen naar niet-contour of DXF-gravering: tabs uitzetten en parameters verbergen; insteken naast part uit
-    if (!showContour || isVectorImportEngraving) {
+    // Bij wisselen naar niet-contour, slot of DXF-gravering: tabs uitzetten en parameters verbergen; insteken naast part uit
+    if (!showContour || showSlot || isVectorImportEngraving) {
       if (tabsEnabledCheckbox) {
         tabsEnabledCheckbox.checked = false;
         updateTabParamsVisibility();
@@ -11676,6 +11896,7 @@ function setupUI() {
     updateUIForOperationTypeAndShape._prevShape = selected;
     updateUIForOperationTypeAndShape();
     updateContourTypeVisibility();
+    updateRectSquareUI();
     updateStepoverHint();
     updateEntrySpeedLabel();
     updateEntrySpeedHint();
