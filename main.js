@@ -1,7 +1,7 @@
 // main.js - G-code generator voor eenvoudige 2D-vormen
 
 /** App-versie (header + cache-busters in index.html). */
-const APP_VERSION = "4.4.2";
+const APP_VERSION = "4.4.3";
 
 /**
  * Conceptuele enumeraties (stringwaarden in de praktijk).
@@ -10280,11 +10280,10 @@ function setupUI() {
     const heightRow = document.getElementById("rect-height-row");
     const widthInput = /** @type {HTMLInputElement | null} */ (document.getElementById("rect-width"));
     const heightInput = /** @type {HTMLInputElement | null} */ (document.getElementById("rect-height"));
-    const squareRow = document.querySelector(".rect-square-row");
-    const isFacing = getEffectiveShape() === ShapeType.FACING;
-    if (squareRow) squareRow.classList.toggle("hidden", isFacing);
-    if (isFacing) {
-      // Facing gebruikt breedte + hoogte los van de Vierkant-checkbox.
+    const shape = getEffectiveShape();
+    const isRectangle = shape === ShapeType.RECTANGLE;
+    if (!isRectangle) {
+      // Vierkant-checkbox en hoogte-verbergen gelden alleen voor rechthoek (niet facing e.d.).
       if (heightRow) heightRow.classList.remove("hidden");
       return;
     }
@@ -10341,6 +10340,9 @@ function setupUI() {
         .querySelectorAll(selector)
         .forEach((el) => el.classList.remove("hidden"));
     }
+    document.querySelectorAll(".shape-rectangle-only").forEach((el) => {
+      el.classList.toggle("hidden", selected !== ShapeType.RECTANGLE);
+    });
     if (selected === ShapeType.RECTANGLE || selected === ShapeType.FACING) {
       document
         .querySelectorAll(".shape-rounded-corners")
