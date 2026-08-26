@@ -1,7 +1,7 @@
 // main.js - G-code generator voor eenvoudige 2D-vormen
 
 /** App-versie (header + cache-busters in index.html). */
-const APP_VERSION = "4.4.3";
+const APP_VERSION = "4.4.4";
 
 /**
  * Conceptuele enumeraties (stringwaarden in de praktijk).
@@ -1675,7 +1675,7 @@ function readInputsFromForm() {
     entrySpeedValue = Number.isFinite(entrySpeedRaw) ? toMm(entrySpeedRaw, displayUnit) : NaN;
   }
 
-  const plungePeckingEnabled = isSimpleMode
+  const plungePeckingEnabled = isSimpleMode || shape === ShapeType.SLOT
     ? false
     : (/** @type {HTMLInputElement} */ (g("plunge-pecking-enabled"))?.checked ?? false);
   const plungePeckDepthRaw = toMm(toNumber(g("plunge-peck-depth")?.value), displayUnit);
@@ -1888,7 +1888,9 @@ function getParamsSnapshotReadOnly() {
     entrySpeedValue = Number.isFinite(entrySpeedRaw) ? vm("entry-speed") : NaN;
   }
 
-  const plungePeckingEnabled = isSimple ? false : (el("plunge-pecking-enabled")?.checked ?? false);
+  const plungePeckingEnabled = isSimple || shape === ShapeType.SLOT
+    ? false
+    : (el("plunge-pecking-enabled")?.checked ?? false);
   const plungePeckDepthRaw = vm("plunge-peck-depth");
   const plungePeckRetractRaw = vm("plunge-peck-retract");
 
@@ -10282,8 +10284,9 @@ function setupUI() {
     const heightInput = /** @type {HTMLInputElement | null} */ (document.getElementById("rect-height"));
     const shape = getEffectiveShape();
     const isRectangle = shape === ShapeType.RECTANGLE;
-    if (!isRectangle) {
-      // Vierkant-checkbox en hoogte-verbergen gelden alleen voor rechthoek (niet facing e.d.).
+    const isFacing = shape === ShapeType.FACING;
+    if (!isRectangle && !isFacing) return;
+    if (isFacing) {
       if (heightRow) heightRow.classList.remove("hidden");
       return;
     }
@@ -10982,6 +10985,7 @@ function setupUI() {
     updateFacingEvenSpacingHint();
     updateToolDiameterVisibility();
     updateEntryMethodForEngraving();
+    updatePlungePeckingVisibility();
   }
   operationSelect.addEventListener("change", updateContourTypeVisibility);
   if (contourTypeSelectForToolD) contourTypeSelectForToolD.addEventListener("change", updateContourTypeVisibility);
@@ -11039,14 +11043,17 @@ function setupUI() {
   const plungePeckDepthRow = document.getElementById("plunge-peck-depth-row");
   const plungePeckRetractRow = document.getElementById("plunge-peck-retract-row");
   function updatePlungePeckingVisibility() {
+    const shape = getEffectiveShape();
+    const isSlot = shape === ShapeType.SLOT;
     const isPlunge = entryMethodInput?.value === EntryMethod.PLUNGE;
+    const showPecking = isPlunge && !isSlot;
     document.querySelectorAll(".plunge-pecking-only").forEach((el) => {
       if (el.id === "plunge-peck-depth-row" || el.id === "plunge-peck-retract-row") return;
-      el.classList.toggle("hidden", !isPlunge);
+      el.classList.toggle("hidden", !showPecking);
     });
-    if (plungePeckingCheckbox) plungePeckingCheckbox.disabled = !isPlunge;
-    if (!isPlunge && plungePeckingCheckbox) plungePeckingCheckbox.checked = false;
-    const showParams = isPlunge && !!plungePeckingCheckbox?.checked;
+    if (plungePeckingCheckbox) plungePeckingCheckbox.disabled = !showPecking;
+    if (!showPecking && plungePeckingCheckbox) plungePeckingCheckbox.checked = false;
+    const showParams = showPecking && !!plungePeckingCheckbox?.checked;
     if (plungePeckDepthRow) plungePeckDepthRow.classList.toggle("hidden", !showParams);
     if (plungePeckRetractRow) plungePeckRetractRow.classList.toggle("hidden", !showParams);
   }
