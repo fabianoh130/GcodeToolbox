@@ -1,7 +1,7 @@
 // main.js - G-code generator voor eenvoudige 2D-vormen
 
 /** App-versie (header + cache-busters in index.html). */
-const APP_VERSION = "4.4.1";
+const APP_VERSION = "4.4.2";
 
 /**
  * Conceptuele enumeraties (stringwaarden in de praktijk).
@@ -10,6 +10,7 @@ const ShapeType = {
   CIRCLE: "circle",
   SQUARE: "square",
   RECTANGLE: "rectangle",
+  SLOT: "slot",
   HEXAGON: "hexagon",
   FACING: "facing",
   ELLIPSE: "ellipse",
@@ -629,26 +630,7 @@ function getRectHalfDims(shapeParams) {
   return { hw: width / 2, hh: height / 2 };
 }
 
-/**
- * Legacy square → rectangle normaliseren (breedte/hoogte vullen).
- * @param {string} shape
- * @param {*} shapeParams
- */
-function normalizeLegacySquareShape(shape, shapeParams) {
-  if (shape !== ShapeType.SQUARE) return { shape, shapeParams };
-  const size = shapeParams.size;
-  return {
-    shape: ShapeType.RECTANGLE,
-    shapeParams: {
-      ...shapeParams,
-      type: ShapeType.RECTANGLE,
-      width: size,
-      height: size,
-      cornerRadius: shapeParams.cornerRadius ?? 0,
-    },
-  };
-}
-
+/** Legacy shape=square in het formulier migreren naar rechthoek + Vierkant-checkbox. */
 function migrateLegacySquareShapeInForm() {
   const shapeEl = /** @type {HTMLSelectElement | null} */ (document.getElementById("shape"));
   if (!shapeEl || shapeEl.value !== ShapeType.SQUARE) return;
@@ -677,6 +659,8 @@ function getShapeMinSize(shape, shapeParams) {
       const { width, height } = getRectDims(shapeParams);
       return Math.min(width, height);
     }
+    case ShapeType.SLOT:
+      return NaN;
     case ShapeType.ELLIPSE:
       return Math.min(shapeParams.major, shapeParams.minor);
     case ShapeType.HEXAGON:
@@ -1529,14 +1513,21 @@ function readInputsFromForm() {
   );
   if (shape === ShapeType.SQUARE) shape = ShapeType.RECTANGLE;
   const operationRaw = /** @type {HTMLSelectElement} */ (g("operation")).value;
-  const operation = (shape === ShapeType.FACING ? OperationType.FACING : shape === ShapeType.PATTERNED_HOLES ? OperationType.POCKET : operationRaw);
+  const operation = (shape === ShapeType.FACING
+    ? OperationType.FACING
+    : shape === ShapeType.SLOT
+      ? OperationType.SLOT
+      : shape === ShapeType.PATTERNED_HOLES
+        ? OperationType.POCKET
+        : operationRaw);
 
   const shapeParams = { type: shape };
   if (shape === ShapeType.CIRCLE) {
     shapeParams.diameter = toMm(toNumber(g("circle-diameter").value), displayUnit);
   } else if (shape === ShapeType.SQUARE || shape === ShapeType.RECTANGLE || shape === ShapeType.FACING) {
     shapeParams.width = toMm(toNumber(g("rect-width").value), displayUnit);
-    const isSquare = /** @type {HTMLInputElement} */ (g("rect-square"))?.checked ?? false;
+    // Vierkant-checkbox geldt alleen voor de rechthoek-vorm, niet voor facing.
+    const isSquare = shape !== ShapeType.FACING && (/** @type {HTMLInputElement} */ (g("rect-square"))?.checked ?? false);
     shapeParams.height = isSquare
       ? shapeParams.width
       : toMm(toNumber(g("rect-height").value), displayUnit);
@@ -1546,6 +1537,9 @@ function readInputsFromForm() {
       const cornerEl = g("rounded-corner-radius");
       shapeParams.cornerRadius = cornerEl ? Math.max(0, toMm(toNumber(cornerEl.value), displayUnit)) : 0;
     }
+  } else if (shape === ShapeType.SLOT) {
+    shapeParams.length = toMm(toNumber(g("slot-length").value), displayUnit);
+    shapeParams.slotOrientation = /** @type {HTMLSelectElement} */ (g("slot-orientation"))?.value === "y" ? "y" : "x";
   } else if (shape === ShapeType.ELLIPSE) {
     shapeParams.major = toMm(toNumber(g("ellipse-major").value), displayUnit);
     shapeParams.minor = toMm(toNumber(g("ellipse-minor").value), displayUnit);
@@ -1816,7 +1810,13 @@ function getParamsSnapshotReadOnly() {
   let shape = resolveEffectiveShape(opCat, el("shape")?.value);
   if (shape === ShapeType.SQUARE) shape = ShapeType.RECTANGLE;
   const opRaw = el("operation")?.value;
-  const operation = (shape === ShapeType.FACING ? OperationType.FACING : shape === ShapeType.PATTERNED_HOLES ? OperationType.POCKET : opRaw);
+  const operation = (shape === ShapeType.FACING
+    ? OperationType.FACING
+    : shape === ShapeType.SLOT
+      ? OperationType.SLOT
+      : shape === ShapeType.PATTERNED_HOLES
+        ? OperationType.POCKET
+        : opRaw);
 
   const sp = { type: shape };
   const v = (id) => toNumber(el(id)?.value);
@@ -1824,10 +1824,11 @@ function getParamsSnapshotReadOnly() {
   if (shape === ShapeType.CIRCLE) sp.diameter = vm("circle-diameter");
   else if (shape === ShapeType.FACING || shape === ShapeType.RECTANGLE) {
     sp.width = vm("rect-width");
-    const isSquare = el("rect-square")?.checked ?? false;
+    const isSquare = shape !== ShapeType.FACING && (el("rect-square")?.checked ?? false);
     sp.height = isSquare ? sp.width : vm("rect-height");
     sp.cornerRadius = shape === ShapeType.FACING ? 0 : Math.max(0, vm("rounded-corner-radius") || 0);
   }
+  else if (shape === ShapeType.SLOT) { sp.length = vm("slot-length"); sp.slotOrientation = el("slot-orientation")?.value === "y" ? "y" : "x"; }
   else if (shape === ShapeType.ELLIPSE) { sp.major = vm("ellipse-major"); sp.minor = vm("ellipse-minor"); }
   else if (shape === ShapeType.HEXAGON) sp.height = vm("hexagon-height");
   else if (shape === ShapeType.LETTERS) { sp.text = el("letter-text")?.value || ""; sp.fontSize = vm("letter-size") || 10; sp.letterOrientation = v("letter-orientation") || 0; }
@@ -2100,6 +2101,9 @@ function validateInputs(raw) {
       assertPositive(height, "field.height");
       break;
     }
+    case ShapeType.SLOT:
+      assertPositive(sp.length, "field.slotLength");
+      break;
     case ShapeType.ELLIPSE:
       assertPositive(sp.major, "field.majorAxis");
       assertPositive(sp.minor, "field.minorAxis");
@@ -2261,13 +2265,11 @@ function validateInputs(raw) {
     }
   }
 
-  if (raw.operation === OperationType.SLOT) {
-    try {
-      const norm = normalizeLegacySquareShape(raw.shape, sp);
-      generateSlotPath(norm.shape, norm.shapeParams, cp.toolDiameter);
-    } catch (e) {
-      errors.push(e instanceof Error ? e.message : String(e));
-    }
+  if (raw.shape === ShapeType.SLOT &&
+      Number.isFinite(toolD) && toolD > 0 &&
+      Number.isFinite(sp.length) &&
+      sp.length + 1e-6 < toolD) {
+    errors.push(t("error.slotLengthTooShort"));
   }
 
   if (errors.length > 0) {
@@ -3868,6 +3870,11 @@ function getResultShapePathsRaw(params) {
     return { paths, totalDepth, bottomZ };
   }
 
+  if (shape === ShapeType.SLOT) {
+    paths.push(generateSlotOutlinePoints(shapeParams.length, cutParams.toolDiameter, shapeParams.slotOrientation));
+    return { paths, totalDepth, bottomZ };
+  }
+
   if (shape === ShapeType.FACING || (operation === OperationType.FACING && (shape === ShapeType.SQUARE || shape === ShapeType.RECTANGLE))) {
     const w = shape === ShapeType.FACING ? shapeParams.width : (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.width);
     const h = shape === ShapeType.FACING ? shapeParams.height : (shape === ShapeType.SQUARE ? shapeParams.size : shapeParams.height);
@@ -4013,140 +4020,204 @@ function buildDxfSupportPreviewFields(supportMeta, shift, totalDepth) {
 }
 
 /**
- * Slot-pad genereren (open lijn of enkel punt voor center plunge).
- * Vereist: sleufbreedte = freesdiameter (één dimensie bij rechthoek).
- * @param {string} shape
- * @param {*} shapeParams
+ * Buitencontour van de sleuf (stadium-vorm) voor de resultaat-preview.
+ * @param {number} lengthMm - totale sleuflengte (buitenmaat)
  * @param {number} toolDiameter
+ * @param {string|undefined} orientation - "x" of "y"
  * @returns {{x:number,y:number,z:number}[]}
  */
-function generateSlotPath(shape, shapeParams, toolDiameter) {
-  const toolRadius = toolDiameter / 2;
-  const eps = 1e-6;
-  const norm = normalizeLegacySquareShape(shape, shapeParams);
-  const slotShape = norm.shape;
-  const slotParams = norm.shapeParams;
-
-  if (
-    slotShape === ShapeType.CIRCLE ||
-    slotShape === ShapeType.ELLIPSE ||
-    slotShape === ShapeType.HEXAGON
-  ) {
-    const minSize = getShapeMinSize(slotShape, slotParams);
-    if (!Number.isFinite(minSize) || Math.abs(minSize - toolDiameter) > eps) {
-      throw new Error(t("error.slotWidthMustMatchTool"));
-    }
-    return [{ x: 0, y: 0, z: 0 }];
+function generateSlotOutlinePoints(lengthMm, toolDiameter, orientation) {
+  const r = toolDiameter / 2;
+  const half = Math.max(lengthMm / 2 - r, 0);
+  const pts = [];
+  const SEG = 16;
+  for (let i = 0; i <= SEG; i++) {
+    const a = -Math.PI / 2 + (Math.PI * i) / SEG;
+    pts.push({ x: half + r * Math.cos(a), y: r * Math.sin(a), z: 0 });
   }
-
-  if (slotShape === ShapeType.RECTANGLE) {
-    const { width: w, height: h } = getRectDims(slotParams);
-    if (!Number.isFinite(w) || !Number.isFinite(h)) {
-      throw new Error(t("error.slotWidthMustMatchTool"));
-    }
-    if (Math.abs(w - toolDiameter) <= eps && Math.abs(h - toolDiameter) <= eps) {
-      return [{ x: 0, y: 0, z: 0 }];
-    }
-    if (Math.abs(w - toolDiameter) <= eps) {
-      const halfLine = Math.max(h / 2 - toolRadius, 0);
-      return [
-        { x: 0, y: -halfLine, z: 0 },
-        { x: 0, y: halfLine, z: 0 },
-      ];
-    }
-    if (Math.abs(h - toolDiameter) <= eps) {
-      const halfLine = Math.max(w / 2 - toolRadius, 0);
-      return [
-        { x: -halfLine, y: 0, z: 0 },
-        { x: halfLine, y: 0, z: 0 },
-      ];
-    }
-    throw new Error(t("error.slotWidthMustMatchTool"));
+  for (let i = 0; i <= SEG; i++) {
+    const a = Math.PI / 2 + (Math.PI * i) / SEG;
+    pts.push({ x: -half + r * Math.cos(a), y: r * Math.sin(a), z: 0 });
   }
-
-  throw new Error(t("error.slotShapeNotSupported"));
+  pts.push({ x: pts[0].x, y: pts[0].y, z: 0 });
+  if (orientation === "y") {
+    return pts.map((p) => ({ x: p.y, y: p.x, z: 0 }));
+  }
+  return pts;
 }
 
 /**
- * Eén dieptelaag voor een slot-pad (lijn frezen).
+ * Sleuf-moves genereren (alle dieptelagen).
+ * - Verticale insteek/ramp op insteeksnelheid, horizontale passes op feed.
+ * - Both ways: aan het uiteinde één stepdown omlaag en op feed terug.
+ * - One way: per laag retract naar safe Z en opnieuw insteken bij het startpunt.
+ * - Ramp (alleen both ways): zigzag langs de sleuflijn, blijft binnen de sleufbreedte.
  * @param {ToolpathMove[]} moves
- * @param {{x:number,y:number,z:number}[]} path
- * @param {number} depthZ
+ * @param {{x:number,y:number,z:number}[]} path - 1 punt (plunge) of 2 punten (lijn)
+ * @param {number[]} depths - negatieve Z-waarden per laag
  * @param {*} cutParams
- * @param {string} entryMethod
- * @param {number} safeZ
  * @param {string} slotDirection
- * @param {{ isFirstDepth?: boolean, isLastDepth?: boolean, stepDownFromZ?: number|null }} [opts]
  */
-function addSlotLayerForPath(moves, path, depthZ, cutParams, entryMethod, safeZ, slotDirection, opts = {}) {
-  if (!path || path.length === 0) return;
-  const { isFirstDepth = true, isLastDepth = true, stepDownFromZ = null } = opts;
-  const oneWay = slotDirection === SlotDirection.ONE_WAY;
+function appendSlotMoves(moves, path, depths, cutParams, slotDirection) {
+  if (!path || path.length === 0 || depths.length === 0) return;
+  const safeZ = cutParams.safeHeight;
+  const leadInAbove = Math.max(0, cutParams.leadInAboveMm ?? 2);
+  const entryFeedMm = computeEntryFeedrateMm(cutParams);
+  const baseFeedMm = Math.round(cutParams.feedrate || 0);
 
-  if (path.length === 1) {
-    if (isFirstDepth) {
-      addLayerForPath(moves, path, depthZ, cutParams, false, entryMethod, true, safeZ);
-    } else {
-      addLayerForPath(moves, path, depthZ, cutParams, false, entryMethod, false, safeZ);
+  /** @param {number} x @param {number} y @param {number} z */
+  function pushEntryCut(x, y, z) {
+    const m = { x, y, z, type: "cut" };
+    if (Number.isFinite(entryFeedMm) && entryFeedMm > 0 && entryFeedMm !== baseFeedMm) {
+      m.feedrateMmMin = entryFeedMm;
     }
-    if (oneWay && !isLastDepth) {
-      const end = moves[moves.length - 1];
-      if (end && end.z < safeZ - 1e-6) {
-        moves.push({ x: end.x, y: end.y, z: safeZ, type: "rapid" });
+    moves.push(m);
+  }
+  /** @param {number} x @param {number} y @param {number} z */
+  function pushCut(x, y, z) {
+    moves.push({ x, y, z, type: "cut" });
+  }
+
+  const plungePeckingActive = !!cutParams.plungePeckingEnabled;
+  const plungePeckDepthMm = Number.isFinite(cutParams.plungePeckDepthMm) && cutParams.plungePeckDepthMm > 0
+    ? cutParams.plungePeckDepthMm
+    : DEFAULT_PLUNGE_PECK_DEPTH_MM;
+  const plungePeckRetractMm = Number.isFinite(cutParams.plungePeckRetractMm) && cutParams.plungePeckRetractMm > 0
+    ? cutParams.plungePeckRetractMm
+    : DEFAULT_PLUNGE_PECK_RETRACT_MM;
+
+  /** Verticale insteek met optioneel pecking. */
+  function pushVerticalPlunge(x, y, zFrom, zTo) {
+    if (Math.abs(zFrom - zTo) < 1e-9) return;
+    if (!plungePeckingActive) {
+      pushEntryCut(x, y, zTo);
+      return;
+    }
+    let currentZ = zFrom;
+    while (true) {
+      const remaining = currentZ - zTo;
+      const step = Math.min(plungePeckDepthMm, remaining);
+      const nextZ = currentZ - step;
+      pushEntryCut(x, y, nextZ);
+      currentZ = nextZ;
+      if (Math.abs(currentZ - zTo) < 1e-9) break;
+      pushEntryCut(x, y, currentZ + plungePeckRetractMm);
+      moves.push({ x, y, z: currentZ, type: "rapid" });
+    }
+  }
+
+  const isPoint = path.length === 1;
+  const S = path[0];
+  const E = isPoint ? path[0] : path[1];
+  const oneWay = slotDirection === SlotDirection.ONE_WAY;
+  const useRamp = !isPoint && !oneWay && cutParams.entryMethod === EntryMethod.RAMP;
+  const rampRad = degToRad(cutParams.rampAngleMax || 3);
+  const segLen = distance2D(S, E);
+
+  /**
+   * Zigzag-ramp langs de sleuflijn van zStart naar zTarget (insteeksnelheid).
+   * Retourneert eindpositie en de richting waarin de tool bewoog.
+   */
+  function zigzagRamp(from, to, zStart, zTarget) {
+    const dropPerPass = segLen * Math.tan(rampRad);
+    let a = from;
+    let b = to;
+    let z = zStart;
+    if (segLen < 1e-9 || dropPerPass < 1e-12) {
+      pushVerticalPlunge(from.x, from.y, zStart, zTarget);
+      return { pos: from, toward: to };
+    }
+    while (z - zTarget > 1e-9) {
+      const remaining = z - zTarget;
+      if (remaining >= dropPerPass - 1e-12) {
+        z -= dropPerPass;
+        pushEntryCut(b.x, b.y, z);
+        const tmp = a; a = b; b = tmp;
+      } else {
+        const f = remaining / dropPerPass;
+        const px = a.x + (b.x - a.x) * f;
+        const py = a.y + (b.y - a.y) * f;
+        pushEntryCut(px, py, zTarget);
+        return { pos: { x: px, y: py }, toward: b };
       }
     }
-    return;
+    return { pos: a, toward: b };
   }
 
-  const start = path[0];
-  const last = moves[moves.length - 1];
-  const atStartAfterReturn = last
-    && Math.abs(last.x - start.x) < 1e-6
-    && Math.abs(last.y - start.y) < 1e-6
-    && !oneWay
-    && !isFirstDepth
-    && Number.isFinite(stepDownFromZ);
-
-  if (atStartAfterReturn) {
-    moves.push({ x: start.x, y: start.y, z: stepDownFromZ, type: "cut" });
-    moves.push({ x: start.x, y: start.y, z: depthZ, type: "cut" });
-    for (let i = 1; i < path.length; i++) {
-      moves.push({ x: path[i].x, y: path[i].y, z: depthZ, type: "cut" });
+  /** Na de ramp: volledige pass op diepte zodat de hele sleuflengte vlak is. */
+  function finishFullPassAtDepth(res, depthZ) {
+    const first = res.toward;
+    const second = first === S ? E : S;
+    if (Math.abs(res.pos.x - first.x) > 1e-9 || Math.abs(res.pos.y - first.y) > 1e-9) {
+      pushCut(first.x, first.y, depthZ);
     }
-  } else {
-    addLayerForPath(
-      moves,
-      path,
-      depthZ,
-      cutParams,
-      false,
-      entryMethod,
-      true,
-      safeZ,
-      undefined,
-      false,
-      false,
-      cutParams.toolDiameter / 2,
-      true,
-      undefined,
-      undefined,
-      undefined,
-      true,
-      false,
-      true
-    );
+    pushCut(second.x, second.y, depthZ);
+    return second;
   }
 
-  if (!oneWay) {
-    for (let i = path.length - 2; i >= 0; i--) {
-      moves.push({ x: path[i].x, y: path[i].y, z: depthZ, type: "cut" });
+  let currentEnd = S;
+  depths.forEach((depthZ, i) => {
+    const prevZ = i === 0 ? 0 : depths[i - 1];
+
+    if (isPoint) {
+      // Enkel punt: boorgat (plunge, met pecking indien actief)
+      if (i === 0) {
+        moves.push({ x: S.x, y: S.y, z: safeZ, type: "rapid" });
+        if (safeZ > leadInAbove) {
+          moves.push({ x: S.x, y: S.y, z: leadInAbove, type: "rapid" });
+        }
+        pushEntryCut(S.x, S.y, 0);
+      }
+      pushVerticalPlunge(S.x, S.y, i === 0 ? 0 : prevZ, depthZ);
+      return;
     }
-  } else {
-    const end = moves[moves.length - 1];
-    if (end && end.z < safeZ - 1e-6) {
-      moves.push({ x: end.x, y: end.y, z: safeZ, type: "rapid" });
+
+    if (oneWay) {
+      // Elke laag: retract, rapid naar start, insteken, één pass richting einde
+      const last = moves[moves.length - 1];
+      if (last && last.z < safeZ - 1e-6) {
+        moves.push({ x: last.x, y: last.y, z: safeZ, type: "rapid" });
+      }
+      moves.push({ x: S.x, y: S.y, z: safeZ, type: "rapid" });
+      if (safeZ > leadInAbove) {
+        moves.push({ x: S.x, y: S.y, z: leadInAbove, type: "rapid" });
+      }
+      // Door lucht tot vorige laagdiepte, daarna echte insteek
+      pushEntryCut(S.x, S.y, i === 0 ? 0 : prevZ);
+      pushVerticalPlunge(S.x, S.y, i === 0 ? 0 : prevZ, depthZ);
+      pushCut(E.x, E.y, depthZ);
+      moves.push({ x: E.x, y: E.y, z: safeZ, type: "rapid" });
+      return;
     }
-  }
+
+    // Both ways
+    if (i === 0) {
+      moves.push({ x: S.x, y: S.y, z: safeZ, type: "rapid" });
+      if (safeZ > leadInAbove) {
+        moves.push({ x: S.x, y: S.y, z: leadInAbove, type: "rapid" });
+      }
+      pushEntryCut(S.x, S.y, 0);
+      if (useRamp) {
+        const res = zigzagRamp(S, E, 0, depthZ);
+        currentEnd = finishFullPassAtDepth(res, depthZ);
+      } else {
+        pushVerticalPlunge(S.x, S.y, 0, depthZ);
+        pushCut(E.x, E.y, depthZ);
+        currentEnd = E;
+      }
+    } else {
+      const from = currentEnd;
+      const to = from === S ? E : S;
+      if (useRamp) {
+        const res = zigzagRamp(from, to, prevZ, depthZ);
+        currentEnd = finishFullPassAtDepth(res, depthZ);
+      } else {
+        pushVerticalPlunge(from.x, from.y, prevZ, depthZ);
+        pushCut(to.x, to.y, depthZ);
+        currentEnd = to;
+      }
+    }
+  });
 }
 
 /**
@@ -4157,32 +4228,34 @@ function generateToolpath(params) {
   const { shape, operation, shapeParams, cutParams, originParams, plungeOutside, contourType, tabs, facingMode, facingDirection } =
     params;
   const toolRadius = cutParams.toolDiameter / 2;
+  const minSizeForShape = getShapeMinSize(shape, shapeParams);
+  const epsSize = 1e-6;
+  const equalToToolDiameter =
+    Number.isFinite(minSizeForShape) &&
+    Math.abs(minSizeForShape - cutParams.toolDiameter) <= epsSize;
 
   /** @type {ToolpathMove[]} */
   const moves = [];
 
   const depths = computeDepthLevels(cutParams.totalDepth, cutParams.stepdown);
 
-  // Slot (lijn frezen): open pad of center plunge
-  if (operation === OperationType.SLOT) {
-    const norm = normalizeLegacySquareShape(shape, shapeParams);
-    const slotPath = generateSlotPath(norm.shape, norm.shapeParams, cutParams.toolDiameter);
+  // Sleuf (lijn frezen): eigen vorm; breedte = freesdiameter
+  if (shape === ShapeType.SLOT || operation === OperationType.SLOT) {
+    const slotLength = shapeParams.length;
+    const orientation = shapeParams.slotOrientation === "y" ? "y" : "x";
+    const halfLine = Math.max(slotLength / 2 - toolRadius, 0);
+    const slotPath = halfLine <= 1e-9
+      ? [{ x: 0, y: 0, z: 0 }]
+      : orientation === "y"
+        ? [{ x: 0, y: -halfLine, z: 0 }, { x: 0, y: halfLine, z: 0 }]
+        : [{ x: -halfLine, y: 0, z: 0 }, { x: halfLine, y: 0, z: 0 }];
     const slotDirection = params.slotDirection === SlotDirection.ONE_WAY
       ? SlotDirection.ONE_WAY
       : SlotDirection.BOTH_WAYS;
-    const entryMethod = cutParams.entryMethod;
+
+    appendSlotMoves(moves, slotPath, depths, cutParams, slotDirection);
+
     const safeZ = cutParams.safeHeight;
-
-    let prevDepthZ = 0;
-    depths.forEach((depthZ, depthIndex) => {
-      addSlotLayerForPath(moves, slotPath, depthZ, cutParams, entryMethod, safeZ, slotDirection, {
-        isFirstDepth: depthIndex === 0,
-        isLastDepth: depthIndex === depths.length - 1,
-        stepDownFromZ: depthIndex > 0 ? prevDepthZ : null,
-      });
-      prevDepthZ = depthZ;
-    });
-
     if (moves.length > 0) {
       const last = moves[moves.length - 1];
       if (last.z < safeZ - 1e-6) {
@@ -4190,9 +4263,10 @@ function generateToolpath(params) {
       }
     }
 
+    // Origin-shift zoals bij een pocket (uitgefreesd gebied, rand = toolradius om de centerlijn)
     const resultRaw = getResultShapePathsRaw(params);
-    const shift = computeOriginShift(moves, originParams, cutParams.totalDepth, toolRadius, operation, "inside", undefined, false);
-    applyOriginTransform(moves, originParams, cutParams.totalDepth, toolRadius, operation, "inside");
+    const shift = computeOriginShift(moves, originParams, cutParams.totalDepth, toolRadius, OperationType.POCKET, "inside", undefined, false);
+    applyOriginTransform(moves, originParams, cutParams.totalDepth, toolRadius, OperationType.POCKET, "inside");
     if (resultRaw && resultRaw.paths.length > 0) {
       resultRaw.paths.forEach((path) => {
         applyOriginTransformToPoints(path, shift.shiftX, shift.shiftY, shift.zOffset, shift.zOriginMode, cutParams.totalDepth);
@@ -4925,6 +4999,38 @@ function generateToolpath(params) {
             ))
       : generateBasePath(shape, shapeParams, operation);
 
+  // Speciaal geval: binnencontour exact freesdiameter → boorgat of lijn
+  if (
+    operation === OperationType.CONTOUR &&
+    contourType === "inside" &&
+    equalToToolDiameter
+  ) {
+    if (
+      shape === ShapeType.CIRCLE ||
+      shape === ShapeType.ELLIPSE ||
+      shape === ShapeType.HEXAGON
+    ) {
+      contourPath = [{ x: 0, y: 0, z: 0 }];
+    } else if (shape === ShapeType.SQUARE || shape === ShapeType.RECTANGLE) {
+      const { width: w, height: h } = getRectDims(shapeParams);
+      if (Math.abs(w - cutParams.toolDiameter) <= epsSize && Math.abs(h - cutParams.toolDiameter) <= epsSize) {
+        contourPath = [{ x: 0, y: 0, z: 0 }];
+      } else if (Math.abs(w - cutParams.toolDiameter) <= epsSize) {
+        const halfLine = Math.max(h / 2 - toolRadius, 0);
+        contourPath = [
+          { x: 0, y: -halfLine, z: 0 },
+          { x: 0, y: halfLine, z: 0 },
+        ];
+      } else {
+        const halfLine = Math.max(w / 2 - toolRadius, 0);
+        contourPath = [
+          { x: -halfLine, y: 0, z: 0 },
+          { x: halfLine, y: 0, z: 0 },
+        ];
+      }
+    }
+  }
+
   // Voor vierkant/rechthoek/hexagon: startpunt van contourpad verplaatsen naar midden van een zijde
   if (
     operation === OperationType.CONTOUR &&
@@ -5068,7 +5174,31 @@ function generateToolpath(params) {
   if (operation === OperationType.POCKET) {
     const fpDist = (cutParams.finishingPassEnabled && cutParams.finishingPassDistance > 0) ? cutParams.finishingPassDistance : 0;
     const epsPocket = 1e-6;
-    if (shape === ShapeType.CIRCLE) {
+    if (equalToToolDiameter && (
+      shape === ShapeType.CIRCLE ||
+      shape === ShapeType.ELLIPSE ||
+      shape === ShapeType.HEXAGON
+    )) {
+      // Vorm exact freesdiameter: enkel "boor"-pad op het midden
+      pocketPaths = [[{ x: 0, y: 0, z: 0 }]];
+    } else if (equalToToolDiameter && (shape === ShapeType.SQUARE || shape === ShapeType.RECTANGLE)) {
+      const { width: w, height: h } = getRectDims(shapeParams);
+      if (Math.abs(w - cutParams.toolDiameter) <= epsPocket && Math.abs(h - cutParams.toolDiameter) <= epsPocket) {
+        pocketPaths = [[{ x: 0, y: 0, z: 0 }]];
+      } else if (Math.abs(w - cutParams.toolDiameter) <= epsPocket) {
+        const halfLine = Math.max(h / 2 - toolRadius, 0);
+        pocketPaths = [[
+          { x: 0, y: -halfLine, z: 0 },
+          { x: 0, y: halfLine, z: 0 },
+        ]];
+      } else {
+        const halfLine = Math.max(w / 2 - toolRadius, 0);
+        pocketPaths = [[
+          { x: -halfLine, y: 0, z: 0 },
+          { x: halfLine, y: 0, z: 0 },
+        ]];
+      }
+    } else if (shape === ShapeType.CIRCLE) {
       pocketPaths = [generateSpiralPocketCircle(shapeParams, cutParams.stepover, toolRadius, fpDist)];
     } else if (shape === ShapeType.ELLIPSE) {
       pocketPaths = [generateSpiralPocketEllipse(shapeParams, cutParams.stepover, toolRadius, fpDist)];
@@ -5345,7 +5475,7 @@ function generateToolpath(params) {
               }
             }
           });
-        } else if (contourPath && contourPath.length >= 2) {
+        } else if (contourPath && contourPath.length >= 1) {
           const isLastLayer = depthIndex === depths.length - 1;
           addLayerForPath(
             moves,
@@ -6901,6 +7031,12 @@ function getGcodeOperationLabel(params) {
     return `${t("form.shapeVector")} - ${opLabel}`;
   }
   if (shape === ShapeType.FACING || operation === OperationType.FACING) return t("form.operationFacing");
+  if (shape === ShapeType.SLOT || operation === OperationType.SLOT) {
+    const dirLabel = params.slotDirection === SlotDirection.ONE_WAY
+      ? t("form.slotOneWay")
+      : t("form.slotBothWays");
+    return `${t("form.shapeSlot")} - ${dirLabel}`;
+  }
   let opLabel = "";
   if (operation === OperationType.POCKET) {
     opLabel = t("form.operationPocket");
@@ -8163,6 +8299,9 @@ function getSuggestedGcodeFilename(raw) {
   if (raw.shape === ShapeType.THREAD_MILLING) {
     return `gcode_thread_milling_${raw.shapeParams?.threadMillType || ThreadMillType.INTERNAL}_${ts}.nc`;
   }
+  if (raw.shape === ShapeType.SLOT) {
+    return `gcode_slot_${ts}.nc`;
+  }
   return `gcode_${raw.shape}_${raw.operation}_${ts}.nc`;
 }
 
@@ -8909,7 +9048,7 @@ let syncFormUIFromChainStep = null;
 
 /** Formuliervelden die per stap worden opgeslagen. */
 const CHAIN_CAPTURE_FIELD_IDS = [
-  "operation-type", "hole-pattern-layout", "shape", "operation", "slot-direction",
+  "operation-type", "hole-pattern-layout", "shape", "operation", "slot-direction", "slot-length", "slot-orientation",
   "circle-diameter", "rect-width", "rect-height", "rect-square", "rect-preset",
   "rounded-corner-radius", "hexagon-height", "ellipse-major", "ellipse-minor",
   "letter-text", "letter-size", "letter-mode", "letter-orientation",
@@ -9029,6 +9168,10 @@ function migrateLegacyFormStateFields(fields) {
       fields["rect-height"] = fields["square-size"];
     }
     fields["rect-square"] = true;
+  }
+  // v4.4.0/4.4.1 had sleuf kort als bewerking; nu is het een vorm
+  if (fields.operation === "slot") {
+    fields.operation = "pocket";
   }
 }
 
@@ -9616,7 +9759,7 @@ function setupUI() {
 
   // Unit switcher (mm / inch): bewaar keuze, converteer velden bij wissel, update labels
   const LENGTH_INPUT_IDS = [
-    "circle-diameter", "rect-width", "rect-height", "rounded-corner-radius", "ellipse-major", "ellipse-minor", "letter-size",
+    "circle-diameter", "rect-width", "rect-height", "slot-length", "rounded-corner-radius", "ellipse-major", "ellipse-minor", "letter-size",
     "counterbore-head-diameter", "counterbore-depth", "counterbore-bolt-diameter",
     "thread-major-diameter", "thread-pitch", "thread-hole-diameter", "thread-milling-depth",
     "patterned-holes-diameter", "patterned-holes-spacing-x", "patterned-holes-spacing-y",
@@ -9633,7 +9776,7 @@ function setupUI() {
   };
   /** Step in mm voor wrapper (data-step); gebruikt voor +/- knoppen en in inch omgerekend. */
   const STEP_MM_BY_INPUT = {
-    "circle-diameter": 1, "rect-width": 1, "rect-height": 1, "rounded-corner-radius": 0.5,
+    "circle-diameter": 1, "rect-width": 1, "rect-height": 1, "slot-length": 1, "rounded-corner-radius": 0.5,
     "ellipse-major": 1, "ellipse-minor": 1, "letter-size": 1,
     "patterned-holes-diameter": 0.1, "patterned-holes-spacing-x": 1, "patterned-holes-spacing-y": 1,
     "counterbore-head-diameter": 1, "counterbore-depth": 0.5, "counterbore-bolt-diameter": 0.5,
@@ -9653,6 +9796,7 @@ function setupUI() {
     "circle-diameter": 2,
     "rect-width": 3.5,
     "rect-height": 5,
+    "slot-length": 4,
     "rounded-corner-radius": 0,
     "ellipse-major": 2.25,
     "ellipse-minor": 1.5,
@@ -10139,6 +10283,11 @@ function setupUI() {
     const squareRow = document.querySelector(".rect-square-row");
     const isFacing = getEffectiveShape() === ShapeType.FACING;
     if (squareRow) squareRow.classList.toggle("hidden", isFacing);
+    if (isFacing) {
+      // Facing gebruikt breedte + hoogte los van de Vierkant-checkbox.
+      if (heightRow) heightRow.classList.remove("hidden");
+      return;
+    }
     if (!squareCb) return;
     const isSquare = squareCb.checked;
     if (heightRow) heightRow.classList.toggle("hidden", isSquare);
@@ -10175,6 +10324,7 @@ function setupUI() {
       [ShapeType.CIRCLE]: ".shape-circle",
       [ShapeType.SQUARE]: ".shape-rectangle",
       [ShapeType.RECTANGLE]: ".shape-rectangle",
+      [ShapeType.SLOT]: ".shape-slot",
       [ShapeType.HEXAGON]: ".shape-hexagon",
       [ShapeType.FACING]: ".shape-rectangle",
       [ShapeType.ELLIPSE]: ".shape-ellipse",
@@ -10205,6 +10355,12 @@ function setupUI() {
       if (operationRow) operationRow.classList.add("hidden");
       contourOnlyElems.forEach((el) => el.classList.add("hidden"));
       facingOnlyElems.forEach((el) => el.classList.add("hidden"));
+    } else if (selected === ShapeType.SLOT) {
+      // Sleuf: geen bewerkingskeuze (de sleuf IS de bewerking); geen contour/facing rijen
+      if (operationRow) operationRow.classList.add("hidden");
+      facingOnlyElems.forEach((el) => el.classList.add("hidden"));
+      // Verbergt contour-only, stepover en finishing pass via de shape-checks
+      updateContourTypeVisibility();
     } else if (selected === ShapeType.CIRCULAR_PATTERN_HOLES) {
       if (operationRow) operationRow.classList.remove("hidden");
       facingOnlyElems.forEach((el) => el.classList.add("hidden"));
@@ -10285,7 +10441,7 @@ function setupUI() {
     if (xyOriginSelect) {
       if (selected === ShapeType.SQUARE || selected === ShapeType.RECTANGLE || selected === ShapeType.FACING || selected === ShapeType.LETTERS || selected === ShapeType.PATTERNED_HOLES || isVectorImportShape(selected)) {
         xyOriginSelect.value = XYOrigin.BOTTOM_LEFT;
-      } else if (selected === ShapeType.CIRCLE || selected === ShapeType.ELLIPSE || selected === ShapeType.HEXAGON || selected === ShapeType.COUNTERBORE_BOLT || selected === ShapeType.THREAD_MILLING || selected === ShapeType.CIRCULAR_PATTERN_HOLES) {
+      } else if (selected === ShapeType.CIRCLE || selected === ShapeType.ELLIPSE || selected === ShapeType.HEXAGON || selected === ShapeType.SLOT || selected === ShapeType.COUNTERBORE_BOLT || selected === ShapeType.THREAD_MILLING || selected === ShapeType.CIRCULAR_PATTERN_HOLES) {
         xyOriginSelect.value = XYOrigin.CENTER;
       }
     }
@@ -10295,7 +10451,7 @@ function setupUI() {
     const stepoverRowEl = document.getElementById("stepover-input-wrapper")?.closest(".field-row") ?? null;
     if (totalDepthRow) totalDepthRow.classList.toggle("hidden", selected === ShapeType.THREAD_MILLING);
     if (multipleDepthsRow) multipleDepthsRow.classList.toggle("hidden", selected === ShapeType.THREAD_MILLING);
-    if (stepoverRowEl) stepoverRowEl.classList.toggle("hidden", selected === ShapeType.THREAD_MILLING);
+    if (stepoverRowEl) stepoverRowEl.classList.toggle("hidden", selected === ShapeType.THREAD_MILLING || selected === ShapeType.SLOT);
 
     // Insteek-veld: zichtbaarheid via updateEntryMethodForEngraving (gravure + draadfrezen).
 
@@ -10390,6 +10546,8 @@ function setupUI() {
   const rectWidthInput = document.getElementById("rect-width");
   const rectHeightInput = document.getElementById("rect-height");
 
+  // Sync alleen de preset-dropdown; de Vierkant-checkbox wordt NOOIT
+  // automatisch omgezet (anders kan de gebruiker hem niet uitvinken).
   function syncRectPresetFromInputs() {
     if (!rectPresetSelect || !rectWidthInput || !rectHeightInput) return;
     const w = Math.round(parseFloat(/** @type {HTMLInputElement} */ (rectWidthInput).value) || 0);
@@ -10399,10 +10557,6 @@ function setupUI() {
     const options = Array.from(rectPresetSelect.options);
     const match = options.find((opt) => opt.value === key1 || opt.value === key2);
     rectPresetSelect.value = match ? match.value : "";
-    if (rectSquareCheckbox) {
-      rectSquareCheckbox.checked = w > 0 && w === h;
-      updateRectSquareUI();
-    }
   }
 
   if (rectPresetSelect) {
@@ -10599,11 +10753,7 @@ function setupUI() {
   document.addEventListener("unitchange", updatePatternedHolesTotalHint);
   updatePatternedHolesTotalHint();
 
-  // Initiële sync zodat standaardwaarden (bijv. vierkant 50) in de preset-dropdown zichtbaar zijn
-  if (squareSizeInput && squarePresetSelect) {
-    const v = /** @type {HTMLInputElement} */ (squareSizeInput).value;
-    if (["50", "100", "150"].includes(v)) squarePresetSelect.value = v;
-  }
+  // Initiële sync zodat standaardwaarden in de preset-dropdown zichtbaar zijn
   syncRectPresetFromInputs();
   syncPatternedHolesPresetFromInputs();
 
@@ -10702,22 +10852,9 @@ function setupUI() {
   function updateContourTypeVisibility() {
     const op = operationSelect.value;
     const shape = getEffectiveShape();
-    const showContour = op === OperationType.CONTOUR;
-    const showSlot = op === OperationType.SLOT;
+    const isSlotShape = shape === ShapeType.SLOT;
+    const showContour = op === OperationType.CONTOUR && !isSlotShape;
     const showFacing = shape === ShapeType.FACING;
-
-    document.querySelectorAll(".slot-only").forEach((el) => {
-      el.classList.toggle("hidden", !showSlot);
-    });
-
-    const slotOpt = operationSelect?.querySelector('option[value="slot"]');
-    if (slotOpt) {
-      const slotShapeOk = isBasicShapeType(shape);
-      slotOpt.disabled = !slotShapeOk;
-      if (!slotShapeOk && operationSelect?.value === OperationType.SLOT) {
-        operationSelect.value = OperationType.POCKET;
-      }
-    }
 
     const contourTypeSelect = /** @type {HTMLSelectElement} */ (document.getElementById("contour-type"));
     const outsideOpt = document.getElementById("contour-type-outside");
@@ -10776,10 +10913,11 @@ function setupUI() {
       }
     });
 
-    // Stepover: pocket/facing; draadfrezen later via THREAD_MILLING_SPRING_PASSES_ENABLED
+    // Stepover: pocket/facing; niet voor sleuf (breedte = freesdiameter) of draadfrezen
     if (stepoverRow) {
       const showStepover = (op === OperationType.POCKET || op === OperationType.FACING)
-        && shape !== ShapeType.THREAD_MILLING;
+        && shape !== ShapeType.THREAD_MILLING
+        && !isSlotShape;
       if (showStepover) {
         stepoverRow.classList.remove("hidden");
       } else {
@@ -10791,7 +10929,9 @@ function setupUI() {
     // Voor PATTERNED_HOLES is de operatie altijd pocket, ook als de select iets anders zegt.
     const effectiveOpForPocket = shape === ShapeType.FACING
       ? OperationType.FACING
-      : (shape === ShapeType.PATTERNED_HOLES ? OperationType.POCKET : op);
+      : isSlotShape
+        ? OperationType.SLOT
+        : (shape === ShapeType.PATTERNED_HOLES ? OperationType.POCKET : op);
     const showPocket = effectiveOpForPocket === OperationType.POCKET;
     const showFinishingPass = (effectiveOpForPocket === OperationType.POCKET || effectiveOpForPocket === OperationType.CONTOUR)
       && effectiveOpForPocket !== OperationType.SLOT
@@ -10823,8 +10963,8 @@ function setupUI() {
       if (fpCb && fpOverlapRow) fpOverlapRow.classList.toggle("hidden", !fpCb.checked);
     }
 
-    // Bij wisselen naar niet-contour, slot of DXF-gravering: tabs uitzetten en parameters verbergen; insteken naast part uit
-    if (!showContour || showSlot || isVectorImportEngraving) {
+    // Bij wisselen naar niet-contour of DXF-gravering: tabs uitzetten en parameters verbergen; insteken naast part uit
+    if (!showContour || isVectorImportEngraving) {
       if (tabsEnabledCheckbox) {
         tabsEnabledCheckbox.checked = false;
         updateTabParamsVisibility();

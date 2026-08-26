@@ -5,14 +5,14 @@
   <title data-i18n="page.title">Gcode toolbox</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="styles.css?v=4.4.1" />
+  <link rel="stylesheet" href="styles.css?v=4.4.2" />
 </head>
 <body data-chain-mode="on">
   <div class="app">
     <header class="app-header">
       <div class="app-header-inner">
         <div>
-          <h1><span data-i18n="header.title">Gcode toolbox</span> <a href="https://github.com/fabianoh130/GcodeToolbox" target="_blank" rel="noopener noreferrer" class="app-version" data-i18n-title="header.checkForUpdates" title="Check for updates">v4.4.1</a></h1>
+          <h1><span data-i18n="header.title">Gcode toolbox</span> <a href="https://github.com/fabianoh130/GcodeToolbox" target="_blank" rel="noopener noreferrer" class="app-version" data-i18n-title="header.checkForUpdates" title="Check for updates">v4.4.2</a></h1>
         </div>
         <div class="settings-menu-wrapper">
           <button
@@ -142,6 +142,7 @@
                 <option value="rectangle" data-i18n="form.shapeRectangle">Rechthoek</option>
                 <option value="ellipse" data-i18n="form.shapeEllipse">Ovaal / ellipse</option>
                 <option value="hexagon" data-i18n="form.shapeHexagon">Zeshoek</option>
+                <option value="slot" data-i18n="form.shapeSlot">Sleuf (lijn frezen)</option>
               </select>
             </div>
 
@@ -214,6 +215,32 @@
                   </div>
                 </div>
               </div>
+
+              <div class="field-row shape-field shape-slot hidden">
+                <label for="slot-length" data-i18n="form.slotLength">Sleuflengte (mm)</label>
+                <div class="input-with-stepper" data-step="1" data-min="0">
+                  <input type="number" id="slot-length" min="0" step="any" value="100" />
+                  <div class="stepper-buttons">
+                    <button type="button" class="stepper-btn stepper-down" data-i18n-aria-label="form.stepperLess">−</button>
+                    <button type="button" class="stepper-btn stepper-up" data-i18n-aria-label="form.stepperMore">+</button>
+                  </div>
+                </div>
+              </div>
+              <div class="field-row shape-field shape-slot hidden">
+                <label for="slot-orientation" data-i18n="form.slotAlong">Sleuf langs</label>
+                <select id="slot-orientation" name="slot-orientation">
+                  <option value="x" selected data-i18n="form.slotAlongX">X-as</option>
+                  <option value="y" data-i18n="form.slotAlongY">Y-as</option>
+                </select>
+              </div>
+              <div class="field-row shape-field shape-slot hidden">
+                <label for="slot-direction" data-i18n="form.slotDirection">Sleuf richting</label>
+                <select id="slot-direction" name="slot-direction">
+                  <option value="both_ways" selected data-i18n="form.slotBothWays">Heen en terug (op feed)</option>
+                  <option value="one_way" data-i18n="form.slotOneWay">Eén richting (retract tussen passes)</option>
+                </select>
+              </div>
+              <p class="field-hint shape-field shape-slot hidden" data-i18n="form.slotWidthHint">De sleufbreedte is gelijk aan de freesdiameter.</p>
 
               <div class="field-row shape-field shape-hexagon hidden">
                 <label for="hexagon-height" data-i18n="form.hexagonHeight">Hoogte (mm)</label>
@@ -570,14 +597,6 @@
               <select id="operation" name="operation" required>
                 <option value="pocket" data-i18n="form.operationPocket">Pocket (binnen uitfrezen)</option>
                 <option value="contour" data-i18n="form.operationContour">Contour (uitsnijden / buitenom)</option>
-                <option value="slot" data-i18n="form.operationSlot">Sleuf frezen</option>
-              </select>
-            </div>
-            <div id="slot-direction-row" class="field-row slot-only hidden">
-              <label for="slot-direction" data-i18n="form.slotDirection">Sleuf richting</label>
-              <select id="slot-direction" name="slot-direction">
-                <option value="both_ways" selected data-i18n="form.slotBothWays">Heen en terug (op feed)</option>
-                <option value="one_way" data-i18n="form.slotOneWay">Eén richting (retract tussen passes)</option>
               </select>
             </div>
             <div id="facing-mode-row" class="field-row facing-only hidden">
@@ -1157,7 +1176,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
-  <script src="svg-import.js?v=4.4.1"></script>
+  <script src="svg-import.js?v=4.4.2"></script>
   <script src="https://cdn.jsdelivr.net/npm/dxf-parser@1.1.2/dist/dxf-parser.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/clipper-lib@6.4.2/clipper.js"></script>
   <script src="https://storage.ko-fi.com/cdn/scripts/overlay-widget.js"></script>
@@ -1169,10 +1188,10 @@
       'floating-chat.donateButton.text-color': '#fff'
     });
   </script>
-  <script src="translations.js?v=4.4.1"></script>
+  <script src="translations.js?v=4.4.2"></script>
   <!-- Optioneel: na "node scripts/fetch-font-base64.js" uitvoeren kun je de regel hieronder inschakelen voor volledig offline lettergravering -->
   <!-- <script src="font-base64.js"></script> -->
-  <script src="main.js?v=4.4.1"></script>
+  <script src="main.js?v=4.4.2"></script>
 </body>
 </html>
 
