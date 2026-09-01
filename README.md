@@ -33,6 +33,9 @@ This project was created out of my own need for a practical toolbox, and I want 
 
 # Version
 
+## 4.4.5
+* Fixed rectangle width/height fields incorrectly shown for Circle and other non-rectangle shapes
+
 ## 4.4.4
 * Fixed rectangle height field incorrectly shown when Slot shape is selected
 * Plunge pecking hidden and disabled for Slot (not applicable to line milling)

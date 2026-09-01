@@ -5,14 +5,14 @@
   <title data-i18n="page.title">Gcode toolbox</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-  <link rel="stylesheet" href="styles.css?v=4.4.4" />
+  <link rel="stylesheet" href="styles.css?v=4.4.5" />
 </head>
 <body data-chain-mode="on">
   <div class="app">
     <header class="app-header">
       <div class="app-header-inner">
         <div>
-          <h1><span data-i18n="header.title">Gcode toolbox</span> <a href="https://github.com/fabianoh130/GcodeToolbox" target="_blank" rel="noopener noreferrer" class="app-version" data-i18n-title="header.checkForUpdates" title="Check for updates">v4.4.4</a></h1>
+          <h1><span data-i18n="header.title">Gcode toolbox</span> <a href="https://github.com/fabianoh130/GcodeToolbox" target="_blank" rel="noopener noreferrer" class="app-version" data-i18n-title="header.checkForUpdates" title="Check for updates">v4.4.5</a></h1>
         </div>
         <div class="settings-menu-wrapper">
           <button
@@ -147,7 +147,7 @@
             </div>
 
             <div id="shape-dimensions">
-              <div class="field-row shape-field shape-circle">
+              <div class="field-row shape-field shape-circle hidden">
                 <label for="circle-diameter" data-i18n="form.diameter">Diameter (mm)</label>
                 <div class="input-with-stepper" data-step="1" data-min="0">
                   <input type="number" id="circle-diameter" min="0" step="any" value="50" />
@@ -158,7 +158,7 @@
                 </div>
               </div>
 
-              <div class="field-row shape-field shape-rectangle hidden">
+              <div class="field-row shape-field shape-rectangle-dims hidden" id="rect-width-row">
                 <label for="rect-width" data-i18n="form.width">Breedte (mm)</label>
                 <div class="input-with-stepper" data-step="1" data-min="0">
                   <input type="number" id="rect-width" min="0" step="any" value="90" />
@@ -168,7 +168,7 @@
                   </div>
                 </div>
               </div>
-              <div class="field-row shape-field shape-rectangle hidden" id="rect-height-row">
+              <div class="field-row shape-field shape-rectangle-dims hidden" id="rect-height-row">
                 <label for="rect-height" data-i18n="form.height">Hoogte (mm)</label>
                 <div class="input-with-stepper" data-step="1" data-min="0">
                   <input type="number" id="rect-height" min="0" step="any" value="130" />
@@ -188,7 +188,7 @@
                   </span>
                 </label>
               </div>
-              <div class="field-row shape-field shape-rectangle hidden dimension-presets-row">
+              <div class="field-row shape-field shape-rectangle-dims hidden dimension-presets-row">
                 <label for="rect-preset" class="field-label" data-i18n="form.presets">Presets</label>
                 <select id="rect-preset" class="preset-select" aria-label="Preset rechthoek">
                   <option value="" data-i18n="form.presetsNone">—</option>
@@ -1176,7 +1176,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
-  <script src="svg-import.js?v=4.4.4"></script>
+  <script src="svg-import.js?v=4.4.5"></script>
   <script src="https://cdn.jsdelivr.net/npm/dxf-parser@1.1.2/dist/dxf-parser.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/clipper-lib@6.4.2/clipper.js"></script>
   <script src="https://storage.ko-fi.com/cdn/scripts/overlay-widget.js"></script>
@@ -1188,10 +1188,10 @@
       'floating-chat.donateButton.text-color': '#fff'
     });
   </script>
-  <script src="translations.js?v=4.4.4"></script>
+  <script src="translations.js?v=4.4.5"></script>
   <!-- Optioneel: na "node scripts/fetch-font-base64.js" uitvoeren kun je de regel hieronder inschakelen voor volledig offline lettergravering -->
   <!-- <script src="font-base64.js"></script> -->
-  <script src="main.js?v=4.4.4"></script>
+  <script src="main.js?v=4.4.5"></script>
 </body>
 </html>
 
