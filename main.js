@@ -1,7 +1,7 @@
 // main.js - G-code generator voor eenvoudige 2D-vormen
 
 /** App-versie (header + cache-busters in index.html). */
-const APP_VERSION = "4.4.4";
+const APP_VERSION = "4.4.5";
 
 /**
  * Conceptuele enumeraties (stringwaarden in de praktijk).
@@ -10277,16 +10277,23 @@ function setupUI() {
       : t("form.facingEvenSpacingStepoverHintMm", { val: showVal });
   }
 
-  function updateRectSquareUI() {
-    const squareCb = /** @type {HTMLInputElement | null} */ (document.getElementById("rect-square"));
+  function updateRectangleFieldsVisibility() {
+    const widthRow = document.getElementById("rect-width-row");
     const heightRow = document.getElementById("rect-height-row");
+    const presetsRow = document.querySelector(".dimension-presets-row");
+    const squareCb = /** @type {HTMLInputElement | null} */ (document.getElementById("rect-square"));
     const widthInput = /** @type {HTMLInputElement | null} */ (document.getElementById("rect-width"));
     const heightInput = /** @type {HTMLInputElement | null} */ (document.getElementById("rect-height"));
     const shape = getEffectiveShape();
-    const isRectangle = shape === ShapeType.RECTANGLE;
-    const isFacing = shape === ShapeType.FACING;
-    if (!isRectangle && !isFacing) return;
-    if (isFacing) {
+    const showDims = shape === ShapeType.RECTANGLE || shape === ShapeType.FACING;
+
+    if (widthRow) widthRow.classList.toggle("hidden", !showDims);
+    if (presetsRow) presetsRow.classList.toggle("hidden", !showDims);
+    if (!showDims) {
+      if (heightRow) heightRow.classList.add("hidden");
+      return;
+    }
+    if (shape === ShapeType.FACING) {
       if (heightRow) heightRow.classList.remove("hidden");
       return;
     }
@@ -10324,11 +10331,11 @@ function setupUI() {
       .forEach((el) => el.classList.add("hidden"));
     const map = {
       [ShapeType.CIRCLE]: ".shape-circle",
-      [ShapeType.SQUARE]: ".shape-rectangle",
-      [ShapeType.RECTANGLE]: ".shape-rectangle",
+      [ShapeType.SQUARE]: ".shape-rectangle-dims",
+      [ShapeType.RECTANGLE]: ".shape-rectangle-dims",
       [ShapeType.SLOT]: ".shape-slot",
       [ShapeType.HEXAGON]: ".shape-hexagon",
-      [ShapeType.FACING]: ".shape-rectangle",
+      [ShapeType.FACING]: ".shape-rectangle-dims",
       [ShapeType.ELLIPSE]: ".shape-ellipse",
       [ShapeType.LETTERS]: ".shape-letters",
       [ShapeType.COUNTERBORE_BOLT]: ".shape-counterbore-bolt",
@@ -10351,7 +10358,7 @@ function setupUI() {
         .querySelectorAll(".shape-rounded-corners")
         .forEach((el) => el.classList.remove("hidden"));
     }
-    updateRectSquareUI();
+    updateRectangleFieldsVisibility();
 
     const operationRow = document.getElementById("operation-row");
     const contourOnlyElems = document.querySelectorAll(".contour-only");
@@ -10575,13 +10582,13 @@ function setupUI() {
       if (rectHeightInput) /** @type {HTMLInputElement} */ (rectHeightInput).value = String(fromMm(h, u));
       if (rectSquareCheckbox) {
         rectSquareCheckbox.checked = Math.abs(w - h) < 1e-6;
-        updateRectSquareUI();
+        updateRectangleFieldsVisibility();
       }
     });
   }
   if (rectSquareCheckbox) {
     rectSquareCheckbox.addEventListener("change", () => {
-      updateRectSquareUI();
+      updateRectangleFieldsVisibility();
       syncRectPresetFromInputs();
       if (typeof updateRegenerateIndicator === "function") updateRegenerateIndicator();
     });
@@ -12067,7 +12074,7 @@ function setupUI() {
     updateUIForOperationTypeAndShape._prevShape = selected;
     updateUIForOperationTypeAndShape();
     updateContourTypeVisibility();
-    updateRectSquareUI();
+    updateRectangleFieldsVisibility();
     updateStepoverHint();
     updateEntrySpeedLabel();
     updateEntrySpeedHint();
