@@ -1,7 +1,7 @@
 // main.js - G-code generator voor eenvoudige 2D-vormen
 
 /** App-versie (header + cache-busters in index.html). */
-const APP_VERSION = "4.4.5";
+const APP_VERSION = "4.4.6";
 
 /**
  * Conceptuele enumeraties (stringwaarden in de praktijk).
@@ -11050,6 +11050,9 @@ function setupUI() {
   const plungePeckDepthRow = document.getElementById("plunge-peck-depth-row");
   const plungePeckRetractRow = document.getElementById("plunge-peck-retract-row");
   function updatePlungePeckingVisibility() {
+    const plungePeckingCheckbox = /** @type {HTMLInputElement | null} */ (document.getElementById("plunge-pecking-enabled"));
+    const plungePeckDepthRow = document.getElementById("plunge-peck-depth-row");
+    const plungePeckRetractRow = document.getElementById("plunge-peck-retract-row");
     const shape = getEffectiveShape();
     const isSlot = shape === ShapeType.SLOT;
     const isPlunge = entryMethodInput?.value === EntryMethod.PLUNGE;
