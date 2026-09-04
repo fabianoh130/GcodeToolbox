@@ -33,6 +33,9 @@ This project was created out of my own need for a practical toolbox, and I want 
 
 # Version
 
+## 4.4.6
+* Fixed app not generating G-code (setupUI crashed on pecking visibility during init)
+
 ## 4.4.5
 * Fixed rectangle width/height fields incorrectly shown for Circle and other non-rectangle shapes
 
